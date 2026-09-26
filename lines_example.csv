@@ -1,0 +1,7 @@
+player,market,line,side,multiplier
+Jahmyr Gibbs,anytime_td,0.5,more,1.45
+Derrick Henry,anytime_td,0.5,more,1.55
+Amon-Ra St. Brown,anytime_td,0.5,more,1.9
+Jared Goff,pass_tds,1.5,more,1.75
+Jayden Daniels,pass_tds,1.5,less,1.6
+Caleb Williams,pass_tds,1.5,less,1.65
