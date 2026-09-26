@@ -22,6 +22,9 @@ python -m tdmodel week --exclude "Christian McCaffrey,Puka Nacua"
 python -m tdmodel week --sleeper
 python -m tdmodel week --sleeper --overs-only --min-edge 0.05
 
+# Probability play: the most likely "More" picks, ignoring value
+python -m tdmodel week --sleeper --kalshi --probability-play
+
 # (or type the lines in yourself)
 python -m tdmodel week --lines my_lines.csv
 ```

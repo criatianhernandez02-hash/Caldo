@@ -135,6 +135,8 @@ def print_disagreements(legs: pd.DataFrame, n: int = 10) -> None:
 
 
 def cmd_week(args) -> None:
+    if args.probability_play:
+        args.allow_negative = args.overs_only = args.overlap = True
     games = load_games(args.cache, args.refresh)
     season, week = (args.season, args.week) if args.season and args.week else next_week(games)
     stats = load_player_weeks([season - 1, season], season, args.cache, args.refresh)
@@ -240,6 +242,8 @@ def main(argv=None) -> None:
     w.add_argument("--lines", help="CSV of Sleeper lines: player,market,line,side[,multiplier]")
     w.add_argument("--min-edge", type=float, default=0.0,
                    help="with payouts known, only use legs with at least this edge (0.05 = +5%%)")
+    w.add_argument("--probability-play", action="store_true",
+                   help="just the most likely 'More' picks, ignoring value (= --allow-negative --overs-only --overlap)")
     w.add_argument("--allow-negative", action="store_true", help="keep legs the model rates below breakeven")
     w.add_argument("--stake", type=float, default=20.0)
     w.add_argument("--sizes", default="3,5,8", help="legs per slip: anchor,core,longshot")
