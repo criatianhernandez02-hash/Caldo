@@ -18,6 +18,7 @@ from . import backtest as bt
 from .data import DEFAULT_CACHE, load_games, load_player_weeks
 from .model import Config, project_week
 from .parlay import DEFAULT_PLAN, default_legs, legs_from_lines, load_lines, weekly_card
+from . import sleeper
 
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", 30)
@@ -90,6 +91,21 @@ def print_card(slips, stake: float) -> None:
                   f"model expected profit {ev:+.2f}")
 
 
+def print_value_board(legs: pd.DataFrame, top: int) -> None:
+    v = legs.dropna(subset=["multiplier"]).copy()
+    v["breakeven"] = 1 / v["multiplier"]
+    v["edge"] = v["prob"] * v["multiplier"] - 1
+    v = v.sort_values("edge", ascending=False).head(top)
+    v["pick"] = [f"{'Anytime TD' if m != 'pass_tds' else 'Pass TDs'} {s.upper()} {l}"
+                 for m, s, l in zip(v["market"], v["side"], v["line"])]
+    t = v[["player", "pos", "team", "opp", "pick", "multiplier", "breakeven", "prob", "edge"]].copy()
+    for c in ("breakeven", "prob"):
+        t[c] = t[c].map(_pct)
+    t["edge"] = t["edge"].map(lambda e: f"{e:+.0%}")
+    print("\n=== SLEEPER VALUE BOARD (model win % vs the % Sleeper's payout needs; edge = expected profit per $1) ===")
+    print(t.to_string(index=False))
+
+
 def cmd_week(args) -> None:
     games = load_games(args.cache, args.refresh)
     season, week = (args.season, args.week) if args.season and args.week else next_week(games)
@@ -98,18 +114,43 @@ def cmd_week(args) -> None:
     if args.exclude:
         out = {n.strip().lower() for n in args.exclude.split(",")}
         proj = proj[~proj["name"].str.lower().isin(out)]
+
+    injured = pd.DataFrame(columns=["name", "injury_status"])
+    if args.sleeper:
+        inj = sleeper.injury_report(args.cache, args.refresh).drop_duplicates("player_id")
+        proj = proj.merge(inj, on="player_id", how="left")
+        skip = proj["injury_status"].isin(sleeper.SKIP_STATUSES)
+        injured = proj.loc[skip, ["name", "injury_status"]]
+        proj = proj[~skip].reset_index(drop=True)
     print(f"Season {season}, week {week}: {env['game_id'].nunique()} games, {len(proj)} players projected")
+    if len(injured):
+        print("Dropped (Sleeper injury status): " +
+              ", ".join(f"{n} ({s})" for n, s in zip(injured["name"], injured["injury_status"])))
     print_week(proj, env, args.top)
 
-    if args.lines:
+    unmatched = []
+    if args.sleeper:
+        lines = sleeper.fetch_lines(args.cache, args.refresh)
+        if lines.empty:
+            print("\nSleeper has no NFL touchdown lines up right now; using model-only legs.")
+            legs = default_legs(proj)
+        else:
+            legs, unmatched = legs_from_lines(proj, lines)
+    elif args.lines:
         legs, unmatched = legs_from_lines(proj, load_lines(args.lines))
-        if unmatched:
-            print(f"\n(no projection for: {', '.join(unmatched)})")
     else:
         legs = default_legs(proj)
+    if unmatched:
+        print(f"\n(no projection for: {', '.join(sorted(set(unmatched)))})")
+    if "injury_status" in proj:
+        q = set(proj.loc[proj["injury_status"] == "Questionable", "name"])
+        legs["player"] = [f"{p} (Q)" if p in q else p for p in legs["player"]]
+    if legs["multiplier"].notna().any():
+        print_value_board(legs, args.top)
     sizes = [int(x) for x in args.sizes.split(",")]
     plan = [(name, n, mode) for (name, _, mode), n in zip(DEFAULT_PLAN, sizes)]
-    slips = weekly_card(legs, args.stake, plan, overlap=args.overlap, overs_only=args.overs_only)
+    slips = weekly_card(legs, args.stake, plan, overlap=args.overlap, overs_only=args.overs_only,
+                        min_edge=None if args.allow_negative else args.min_edge)
     print_card(slips, args.stake)
 
     if args.out:
@@ -154,7 +195,12 @@ def main(argv=None) -> None:
     w = sub.add_parser("week", help="project a week and build the parlay card")
     w.add_argument("--season", type=int)
     w.add_argument("--week", type=int)
+    w.add_argument("--sleeper", action="store_true",
+                   help="pull live Sleeper Picks lines + payouts and drop injured players")
     w.add_argument("--lines", help="CSV of Sleeper lines: player,market,line,side[,multiplier]")
+    w.add_argument("--min-edge", type=float, default=0.0,
+                   help="with payouts known, only use legs with at least this edge (0.05 = +5%%)")
+    w.add_argument("--allow-negative", action="store_true", help="keep legs the model rates below breakeven")
     w.add_argument("--stake", type=float, default=20.0)
     w.add_argument("--sizes", default="3,5,8", help="legs per slip: anchor,core,longshot")
     w.add_argument("--overs-only", action="store_true", help="only 'more' legs (no QB unders)")

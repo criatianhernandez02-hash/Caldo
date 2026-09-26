@@ -131,3 +131,28 @@ def test_legs_from_lines_matches_names_and_sides():
     assert legs.iloc[0]["prob"] == pytest.approx(rb)
     assert legs.iloc[1]["prob"] == pytest.approx(1 - qb_over)
     assert len(default_legs(proj)) == (proj["pos"] != "QB").sum() + 2 * (proj["pos"] == "QB").sum()
+
+
+def test_parse_sleeper_lines():
+    from tdmodel.sleeper import parse_lines
+
+    def opt(outcome, value, mult, status="active"):
+        return {"outcome": outcome, "outcome_value": value, "payout_multiplier": mult,
+                "status": status, "line_type": "normal"}
+
+    raw = [
+        {"sport": "nfl", "status": "active", "game_status": "pre_game", "subject_id": "1",
+         "wager_type": "anytime_touchdowns", "options": [opt("over", 0.5, "1.79"), opt("under", 0.5, "1.78")]},
+        {"sport": "nfl", "status": "active", "game_status": "pre_game", "subject_id": "2",
+         "wager_type": "passing_touchdowns", "options": [opt("over", 1.5, "1.54"), opt("under", 1.5, "2.10", "suspended")]},
+        {"sport": "nfl", "status": "active", "game_status": "pre_game", "subject_id": "1",
+         "wager_type": "receiving_yards", "options": [opt("over", 60.5, "1.8")]},
+        {"sport": "mlb", "status": "active", "game_status": "pre_game", "subject_id": "9",
+         "wager_type": "hits", "options": [opt("over", 0.5, "1.6")]},
+    ]
+    players = {"1": {"full_name": "Omarion Hampton", "gsis_id": "00-1", "injury_status": None},
+               "2": {"full_name": "Josh Allen", "gsis_id": "00-2", "injury_status": "Questionable"}}
+    lines = parse_lines(raw, players)
+    assert list(lines["market"]) == ["anytime_td", "anytime_td", "pass_tds"]
+    assert list(lines["side"]) == ["more", "less", "more"]
+    assert lines.iloc[2]["multiplier"] == 1.54 and lines.iloc[2]["player_id"] == "00-2"

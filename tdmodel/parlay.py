@@ -70,10 +70,17 @@ def load_lines(path: str) -> pd.DataFrame:
 
 
 def legs_from_lines(proj: pd.DataFrame, lines: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Price each line with the model. Matches on nflverse player_id when the lines carry
+    one (the Sleeper feed does), otherwise on the player's name."""
     by_name = {norm_name(n): i for i, n in proj["name"].items()}
+    by_id = {pid: i for i, pid in proj["player_id"].items()} if "player_id" in proj else {}
     legs, unmatched = [], []
     for _, ln in lines.iterrows():
-        idx = by_name.get(norm_name(ln["player"]))
+        if ln["market"] in ("anytime_td", "rush_rec_tds") and idx_is_qb(proj, by_id, by_name, ln):
+            continue  # QB rushing TDs are not modelled well enough (never backtested)
+        idx = by_id.get(ln.get("player_id")) if pd.notna(ln.get("player_id")) else None
+        if idx is None:
+            idx = by_name.get(norm_name(ln["player"]))
         lam = proj.at[idx, MARKET_LAMBDA[ln["market"]]] if idx is not None else np.nan
         if idx is None or pd.isna(lam):
             unmatched.append(str(ln["player"]))
@@ -82,6 +89,12 @@ def legs_from_lines(proj: pd.DataFrame, lines: pd.DataFrame) -> tuple[pd.DataFra
         prob = p_more if ln["side"] == "more" else 1 - p_more
         legs.append(_leg(proj.loc[idx], ln["market"], float(ln["line"]), ln["side"], prob, ln["multiplier"]))
     return pd.DataFrame(legs), unmatched
+
+
+def idx_is_qb(proj: pd.DataFrame, by_id: dict, by_name: dict, ln: pd.Series) -> bool:
+    idx = by_id.get(ln.get("player_id")) if pd.notna(ln.get("player_id")) else None
+    idx = idx if idx is not None else by_name.get(norm_name(ln["player"]))
+    return idx is not None and proj.at[idx, "pos"] == "QB"
 
 
 @dataclass
@@ -109,8 +122,8 @@ def build_slip(legs: pd.DataFrame, n: int, mode: str = "safe", exclude_players: 
     """Greedy pick of n legs.
 
     mode="safe":     highest win probability (any side).
-    mode="longshot": touchdown "more" legs only; ranked by expected value when Sleeper
-                     multipliers are known, otherwise by probability.
+    mode="longshot": touchdown "more" legs only, ranked by probability (legs below the
+                     edge threshold are already filtered out by weekly_card).
     At most `max_per_team` legs per team keeps one bad offensive game from sinking several
     legs at once (legs on the same team are correlated).
     """
@@ -118,11 +131,7 @@ def build_slip(legs: pd.DataFrame, n: int, mode: str = "safe", exclude_players: 
     pool = legs[~legs["player"].isin(exclude_players)].copy()
     if mode == "longshot":
         pool = pool[pool["side"] == "more"]
-        has_mult = pool["multiplier"].notna()
-        pool["score"] = np.where(has_mult, pool["prob"] * pool["multiplier"], pool["prob"])
-        pool = pool.sort_values(["score", "prob"], ascending=False)
-    else:
-        pool = pool.sort_values("prob", ascending=False)
+    pool = pool.sort_values("prob", ascending=False)
 
     chosen, teams, games_used, players = [], {}, {}, set()
     for _, leg in pool.iterrows():
@@ -136,18 +145,25 @@ def build_slip(legs: pd.DataFrame, n: int, mode: str = "safe", exclude_players: 
         games_used[leg["game_id"]] = games_used.get(leg["game_id"], 0) + 1
         if len(chosen) == n:
             break
-    return pd.DataFrame(chosen).drop(columns=["score"], errors="ignore").reset_index(drop=True)
+    return pd.DataFrame(chosen).reset_index(drop=True)
 
 
 DEFAULT_PLAN = [("Anchor", 3, "safe"), ("Core", 5, "safe"), ("Longshot", 8, "longshot")]
 
 
 def weekly_card(legs: pd.DataFrame, stake: float = 20.0, plan=DEFAULT_PLAN, overlap: bool = False,
-                overs_only: bool = False) -> list[Slip]:
+                overs_only: bool = False, min_edge: float | None = 0.0) -> list[Slip]:
     """Build the weekend's slips. By default no player appears in two slips, so one
-    player's dud game can't bust the whole card."""
+    player's dud game can't bust the whole card.
+
+    When legs carry Sleeper multipliers, legs whose model edge (prob x multiplier - 1) is
+    below `min_edge` are dropped: a leg the model thinks is overpriced makes every parlay
+    it is in worse. Pass min_edge=None to keep them."""
     if overs_only:
         legs = legs[legs["side"] == "more"]
+    if min_edge is not None and legs["multiplier"].notna().any():
+        edge = legs["prob"] * legs["multiplier"] - 1
+        legs = legs[legs["multiplier"].isna() | (edge >= min_edge)]
     used: set = set()
     slips = []
     for name, n, mode in plan:

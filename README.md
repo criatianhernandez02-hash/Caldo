@@ -18,9 +18,34 @@ python -m tdmodel week
 # 2. Drop anyone ruled out / questionable you don't trust
 python -m tdmodel week --exclude "Christian McCaffrey,Puka Nacua"
 
-# 3. Best: type in the lines Sleeper is actually offering (and the multipliers it shows)
+# 3. Best: pull Sleeper's live lines + payout multipliers and drop injured players
+python -m tdmodel week --sleeper
+python -m tdmodel week --sleeper --overs-only --min-edge 0.05
+
+# (or type the lines in yourself)
 python -m tdmodel week --lines my_lines.csv
 ```
+
+### `--sleeper`
+
+Pulls every NFL **Anytime TD** and **Pass TDs** pick currently on Sleeper, with the payout multiplier
+for each side, from the same endpoint the Sleeper app uses. It also reads Sleeper's player database
+(cached for 24 hours), then:
+
+* drops players listed Out / Doubtful / IR, and marks Questionable players with `(Q)`
+* prints a **value board**: the model's win % vs. the % Sleeper's multiplier needs to break even
+  (`1 / multiplier`), sorted by edge
+* builds the card only from legs with edge ≥ `--min-edge` (default 0). `--allow-negative` turns
+  that filter off.
+
+QB anytime-TD picks (QB rushing TDs) are skipped. The model hasn't been backtested on them and
+underrates goal-line QBs.
+
+Caveats: this endpoint is undocumented and may change or be blocked at any time, and pulling data
+from it may go against Sleeper's terms of service. The card's slip payout is the product of the
+leg multipliers. That's an assumption, so check the payout Sleeper shows before you enter, because
+Sleeper may cap big payouts. A big "edge" often means the model is missing news (an injury or a
+role change) rather than Sleeper being wrong, so look into those before you trust them.
 
 Useful flags: `--overs-only` (no QB "less" legs), `--sizes 3,5,7`, `--stake 20`,
 `--overlap` (let one player appear in several slips), `--out out/` (save CSVs),
