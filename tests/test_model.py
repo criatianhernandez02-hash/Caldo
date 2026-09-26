@@ -156,3 +156,25 @@ def test_parse_sleeper_lines():
     assert list(lines["market"]) == ["anytime_td", "anytime_td", "pass_tds"]
     assert list(lines["side"]) == ["more", "less", "more"]
     assert lines.iloc[2]["multiplier"] == 1.54 and lines.iloc[2]["player_id"] == "00-2"
+
+
+def test_kalshi_parse_and_attach():
+    from tdmodel.kalshi import attach, parse_markets
+
+    mk = lambda title, bid, ask: {"title": title, "yes_bid_dollars": bid, "yes_ask_dollars": ask}
+    prices = parse_markets([
+        mk("Trey McBride: 1+ touchdowns", "0.30", "0.34"),
+        mk("Trey McBride: 2+ touchdowns", "0.05", "0.07"),
+        mk("Case Keenum: 1+ touchdowns", "0.44", "0.96"),  # spread too wide -> ignored
+    ], "anytime_td")
+    assert len(prices) == 2 and prices.iloc[0]["kalshi_prob"] == pytest.approx(0.32)
+    prices["key"] = prices["player"].map(norm_name)
+    legs = pd.DataFrame([
+        {"player": "Trey McBride (Q)", "market": "anytime_td", "line": 0.5, "side": "more"},
+        {"player": "Trey McBride", "market": "anytime_td", "line": 0.5, "side": "less"},
+        {"player": "Case Keenum", "market": "anytime_td", "line": 0.5, "side": "more"},
+    ])
+    out = attach(legs, prices)
+    assert out["kalshi_prob"].iloc[0] == pytest.approx(0.32)
+    assert out["kalshi_prob"].iloc[1] == pytest.approx(0.68)
+    assert np.isnan(out["kalshi_prob"].iloc[2])

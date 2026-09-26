@@ -26,6 +26,26 @@ python -m tdmodel week --sleeper --overs-only --min-edge 0.05
 python -m tdmodel week --lines my_lines.csv
 ```
 
+### `--kalshi`
+
+```bash
+python -m tdmodel week --sleeper --kalshi
+```
+
+Pulls [Kalshi](https://kalshi.com) prediction-market prices for the same props from Kalshi's public
+market-data API, which doesn't need an account. `Player: 1+ touchdowns` is used for anytime TD, and
+`2+` / `3+ passing touchdowns` for pass TDs over 1.5 and 2.5. The Kalshi probability is the midpoint
+of the bid and ask, and markets with a bid/ask spread wider than 15¢ are ignored. Then:
+
+* each leg's win % becomes a blend: 50% model, 50% Kalshi (`--kalshi-weight` changes it)
+* it prints the **biggest model vs Kalshi disagreements**. These usually mean the model is missing
+  news, so check them before betting.
+* the value board shows model %, Kalshi %, and the blend side by side
+
+In the first live comparison (2026 week 3), Kalshi disagreed with most of the model's apparent
+Sleeper edges. Once blended, only a handful of legs were at break-even or better. Treat that as the
+realistic view: Sleeper's prices are close to fair minus its margin, and big edges are rare.
+
 ### `--sleeper`
 
 Pulls every NFL **Anytime TD** and **Pass TDs** pick currently on Sleeper, with the payout multiplier

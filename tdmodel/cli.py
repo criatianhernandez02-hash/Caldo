@@ -18,7 +18,7 @@ from . import backtest as bt
 from .data import DEFAULT_CACHE, load_games, load_player_weeks
 from .model import Config, project_week
 from .parlay import DEFAULT_PLAN, default_legs, legs_from_lines, load_lines, weekly_card
-from . import sleeper
+from . import kalshi, sleeper
 
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", 30)
@@ -79,12 +79,18 @@ def print_card(slips, stake: float) -> None:
     print("Win % assumes legs are independent. 'Fair payout' = the multiplier Sleeper must pay for the")
     print("slip to break even by this model; if Sleeper shows MORE than that, the slip is +EV.")
     for s in slips:
+        if s.legs.empty:
+            print(f"\n--- {s.name}: no legs cleared the edge filter (try --min-edge -0.05 or --allow-negative)")
+            continue
         print(f"\n--- {s.name}:  model win chance {s.prob:.1%}  |  fair payout {s.fair_multiplier:.1f}x")
         for _, leg in s.legs.iterrows():
             mkt = "Anytime TD (Rush+Rec)" if leg["market"] != "pass_tds" else "Pass TDs"
             mult = "" if pd.isna(leg["multiplier"]) else f"  [{leg['multiplier']}x]"
+            k = ""
+            if "kalshi_prob" in leg and pd.notna(leg["kalshi_prob"]):
+                k = f"  (model {leg['model_prob']:.0%}, Kalshi {leg['kalshi_prob']:.0%})"
             print(f"   {leg['player']:<24} {leg['pos']:<3} {leg['team']:>3} vs {leg['opp']:<3} "
-                  f"{mkt} {leg['side'].upper()} {leg['line']}  ->  {leg['prob']:.0%}{mult}")
+                  f"{mkt} {leg['side'].upper()} {leg['line']}  ->  {leg['prob']:.0%}{mult}{k}")
         if not np.isnan(s.multiplier):
             ev = s.expected_return - s.stake
             print(f"   Sleeper payout {s.multiplier:.2f}x -> ${s.stake * s.multiplier:.0f} if it hits; "
@@ -98,12 +104,34 @@ def print_value_board(legs: pd.DataFrame, top: int) -> None:
     v = v.sort_values("edge", ascending=False).head(top)
     v["pick"] = [f"{'Anytime TD' if m != 'pass_tds' else 'Pass TDs'} {s.upper()} {l}"
                  for m, s, l in zip(v["market"], v["side"], v["line"])]
-    t = v[["player", "pos", "team", "opp", "pick", "multiplier", "breakeven", "prob", "edge"]].copy()
-    for c in ("breakeven", "prob"):
+    cols = ["player", "pos", "team", "opp", "pick", "multiplier", "breakeven"]
+    pct = ["breakeven", "prob"]
+    if "kalshi_prob" in v:
+        cols += ["model_prob", "kalshi_prob"]
+        pct += ["model_prob", "kalshi_prob"]
+    t = v[cols + ["prob", "edge"]].copy()
+    for c in pct:
         t[c] = t[c].map(_pct)
     t["edge"] = t["edge"].map(lambda e: f"{e:+.0%}")
-    print("\n=== SLEEPER VALUE BOARD (model win % vs the % Sleeper's payout needs; edge = expected profit per $1) ===")
+    t = t.rename(columns={"model_prob": "model", "kalshi_prob": "kalshi", "prob": "used"})
+    what = "blend of model + Kalshi" if "kalshi_prob" in v else "model win %"
+    print(f"\n=== SLEEPER VALUE BOARD ({what} vs the % Sleeper's payout needs; edge = expected profit per $1) ===")
     print(t.to_string(index=False))
+
+
+def print_disagreements(legs: pd.DataFrame, n: int = 10) -> None:
+    d = legs.dropna(subset=["kalshi_prob"])
+    d = d[d["side"] == "more"].assign(diff=lambda x: x["model_prob"] - x["kalshi_prob"])
+    d = d.reindex(d["diff"].abs().sort_values(ascending=False).index).head(n)
+    if d.empty:
+        return
+    t = d[["player", "team", "market", "line", "model_prob", "kalshi_prob", "diff"]].copy()
+    t["market"] = t["market"].map({"anytime_td": "Anytime TD", "pass_tds": "Pass TDs"}) + " o" + t["line"].astype(str)
+    for c in ("model_prob", "kalshi_prob"):
+        t[c] = t[c].map(_pct)
+    t["diff"] = t["diff"].map(lambda x: f"{x:+.0%}")
+    print("\n=== BIGGEST MODEL vs KALSHI DISAGREEMENTS (check news on these) ===")
+    print(t.drop(columns="line").rename(columns={"model_prob": "model", "kalshi_prob": "kalshi"}).to_string(index=False))
 
 
 def cmd_week(args) -> None:
@@ -145,6 +173,15 @@ def cmd_week(args) -> None:
     if "injury_status" in proj:
         q = set(proj.loc[proj["injury_status"] == "Questionable", "name"])
         legs["player"] = [f"{p} (Q)" if p in q else p for p in legs["player"]]
+    if args.kalshi:
+        legs = kalshi.attach(legs, kalshi.fetch_prices())
+        legs["model_prob"] = legs["prob"]
+        has_k = legs["kalshi_prob"].notna()
+        w = args.kalshi_weight
+        legs.loc[has_k, "prob"] = (1 - w) * legs.loc[has_k, "model_prob"] + w * legs.loc[has_k, "kalshi_prob"]
+        print(f"\nKalshi prices found for {has_k.sum()} of {len(legs)} legs "
+              f"(win % = {1 - w:.0%} model + {w:.0%} Kalshi where available).")
+        print_disagreements(legs)
     if legs["multiplier"].notna().any():
         print_value_board(legs, args.top)
     sizes = [int(x) for x in args.sizes.split(",")]
@@ -197,6 +234,9 @@ def main(argv=None) -> None:
     w.add_argument("--week", type=int)
     w.add_argument("--sleeper", action="store_true",
                    help="pull live Sleeper Picks lines + payouts and drop injured players")
+    w.add_argument("--kalshi", action="store_true",
+                   help="blend in Kalshi prediction-market prices as a second opinion")
+    w.add_argument("--kalshi-weight", type=float, default=0.5, help="weight on Kalshi in the blend (0-1)")
     w.add_argument("--lines", help="CSV of Sleeper lines: player,market,line,side[,multiplier]")
     w.add_argument("--min-edge", type=float, default=0.0,
                    help="with payouts known, only use legs with at least this edge (0.05 = +5%%)")
