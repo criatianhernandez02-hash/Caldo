@@ -6,6 +6,28 @@ A fantasy football ranking formula and trade calculator, in the spirit of RotoBo
 * **Tiers** each position with optimal 1-D clustering (Jenks natural breaks).
 * **Values trades** as ROS points above a waiver-wire replacement. Extra players you receive in a package are discounted by weights measured in simulated leagues. A roster mode rebuilds your best weekly lineup before and after the trade.
 
+## Sleeper integration
+
+Open the **Sleeper league** tab and enter your Sleeper username. The app reads your leagues through Sleeper's public, read-only API, so it needs no password or token. Then:
+
+* **Your league's rules.** Any reception value and per-position catch bonuses (TE premium) are applied exactly: `std + (rec + bonus) × (PPR − std)`, because the gap between the PPR and standard projections is projected receptions. Starting slots are read from the league (QB, RB, WR, TE, FLEX, W/R, W/T and superflex).
+* **Free-agent replacement level.** A player's value is measured against the best player nobody in *your* league rosters.
+* **Power rankings.** Every team's projected starting-lineup points for the rest of the season.
+* **Both sides of a trade.** Your lineup change and your partner's, with a "likely to accept / decline" read.
+* **Trade finder.** Searches 1-for-1, 2-for-1 and 1-for-2 deals with every team for trades that raise your starter points without lowering theirs.
+* **Rankings.** Shows who rosters each player, has a free-agents filter, and shows Sleeper injury tags.
+
+Sleeper player IDs are mapped to nflverse IDs through the DynastyProcess crosswalk, with name matching as a fallback (474 of 475 projected players map).
+
+## Your own app
+
+`python scripts/build_web.py` writes two builds:
+
+* `web/index.html` is a single file. It works offline and in the claude.ai artifact. Sandboxed pages there can't call outside sites, so live Sleeper sync needs the hosted app. Alternatively, bundle a league snapshot with `build_rankings.py --sleeper-user <name>`.
+* `site/` is an installable web app with a manifest, offline cache and home-screen icon. Live Sleeper sync works from any normal web host.
+
+`.github/workflows/refresh.yml` refits the model on the latest NFL data every Tuesday and Friday during the season and deploys `site/` to GitHub Pages. To turn it on, push the repo, set **Settings → Pages → Source** to **GitHub Actions**, and run the workflow once by hand. On a phone, open the Pages URL and choose **Add to Home Screen**.
+
 ## The formula
 
 ```
@@ -88,8 +110,9 @@ We simulated 40 leagues (12 teams, drafted from each season's week-7 projections
 ## Usage
 
 ```bash
-pip install pandas numpy scipy scikit-learn lightgbm pyarrow
+pip install -r requirements.txt
 python scripts/build_rankings.py --refresh   # download data, fit, project current season
+python scripts/build_rankings.py --sleeper-user <name>   # also bundle a Sleeper league snapshot
 python scripts/run_backtest.py               # 10-season backtest + ablations (~25 min)
 python scripts/run_backtest.py --quick       # full model only
 python scripts/calibrate_trades.py           # package weights (needs backtest output)
@@ -109,11 +132,16 @@ Data comes from [nflverse](https://github.com/nflverse): weekly player stats, pl
 | `caldo/backtest.py` | Walk-forward backtest, baselines, ablations, LightGBM benchmark |
 | `caldo/tiers.py` | Jenks tiers |
 | `caldo/trade.py` | VORP, lineup math, league simulation, package weights |
-| `web/template.html` | Trade calculator UI; `build_web.py` bundles it with data into `web/index.html` |
+| `caldo/sleeper.py` | Sleeper API client, player-ID mapping, league snapshots |
+| `web/template.html` | Calculator UI (trade, Sleeper league, rankings, backtest); `build_web.py` bundles it |
+| `web/pwa/` | Manifest, service worker and icons for the installable app |
+| `.github/workflows/refresh.yml` | Scheduled refit and GitHub Pages deploy |
 | `output/` | Current rankings CSV, fitted formula coefficients, backtest summaries |
 
 ## Known limits
 
 * No depth charts or injury reports yet. A backup QB who started while the starter was hurt can project too high (e.g. Joe Flacco, Justin Fields in 2024). Adding nflverse depth charts and injury designations is the next step.
 * Players who haven't played a snap this season aren't projected (rookies before their debut, players on season-opening IR).
-* Redraft only: no K/DST, no dynasty or keeper age curves, no superflex toggle yet.
+* Redraft only: no K/DST projections and no dynasty or keeper age curves. K, DEF and IDP slots in Sleeper leagues are ignored.
+* Passing TDs are projected at 4 points. Leagues with 6-point passing TDs undervalue QBs a little (the app says so).
+* The trade finder doesn't model the free agent a team could add with a roster spot freed by a 2-for-1.

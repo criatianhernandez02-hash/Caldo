@@ -17,17 +17,19 @@ from caldo.backtest import TRAIN_START, load_features
 from caldo.config import FANTASY_LAST_WEEK, OUT_DIR, ROOT, League
 from caldo.data import fetch
 from caldo.model import Projector
+from caldo import sleeper
 from caldo.ros import project_ros
 from caldo.tiers import assign_tiers
 from caldo.trade import vorp
 
-KEEP = {"QB": 40, "RB": 90, "WR": 120, "TE": 45}
+KEEP = {"QB": 64, "RB": 130, "WR": 170, "TE": 75}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--refresh", action="store_true", help="re-download this season's data first")
+    ap.add_argument("--sleeper-user", help="bundle this Sleeper user's leagues (for pages without internet)")
     args = ap.parse_args()
     if args.refresh:
         fetch(args.season)
@@ -70,31 +72,42 @@ def main():
         f.to_csv(OUT_DIR / f"formula_{s}.csv", index=False)
 
     weeks = list(range(week, FANTASY_LAST_WEEK + 1))
+    try:
+        ids = sleeper.id_map(refresh=args.refresh)
+        base["sid"] = sleeper.attach_sleeper_ids(base, ids)
+    except OSError as e:  # Sleeper unreachable: the calculator still works without league sync
+        print(f"warning: no Sleeper id mapping ({e})")
+        base["sid"] = None
     players = []
     for pid, r in base.iterrows():
         wk = {}
-        for s in ["ppr", "half", "std"]:
+        for s in ["ppr", "std"]:  # any reception value is std + rec * (ppr - std)
             w = weeklies[s][weeklies[s].player_id == pid].set_index("week").xpts
             wk[s] = [round(float(w.get(x, 0.0)), 2) for x in weeks]
         players.append({
-            "id": pid, "name": r["name"], "pos": r.position, "team": r.team,
+            "id": pid, "sid": r.sid if isinstance(r.sid, str) else None,
+            "name": r["name"], "pos": r.position, "team": r.team,
             "ros": {s: round(float(r[f"ros_{s}"]), 1) for s in ["ppr", "half", "std"]},
-            "tier": {s: int(r[f"tier_{s}"]) for s in ["ppr", "half", "std"]},
-            "td": round(float(r.ros_td), 1), "ppg": round(float(r.ros_ppg), 1),
+            "td": round(float(r.ros_td), 1),
             "szn_ppg": None if pd.isna(r.szn_pts) else round(float(r.szn_pts), 1),
-            "gl": int(r.games_left), "xg": round(float(r.exp_games), 1),
+            "gl": int(r.games_left), "xg": round(float(r.exp_games), 2),
             "sched": round(float(r.sched_ease), 3), "next": r.next_opp,
-            "next_proj": round(float(r.next_proj), 1), "weekly": wk,
+            "weekly": wk,
         })
     meta = {"season": args.season, "week": week, "weeks": weeks, "generated": date.today().isoformat()}
-    pw = OUT_DIR / "package_weights.json"
-    if pw.exists():
-        meta["package"] = json.loads(pw.read_text())
-    bt = OUT_DIR / "backtest" / "summary.json"
-    if bt.exists():
-        meta["backtest"] = json.loads(bt.read_text())
+    data = {"meta": meta, "players": players}
+    try:
+        mapped = {p["sid"] for p in players if p["sid"]}
+        data["sleeper_dir"] = sleeper.directory(mapped)
+        data["injuries"] = sleeper.injuries(list(mapped) + list(data["sleeper_dir"]))
+        if args.sleeper_user:
+            data["sleeper_snapshot"] = sleeper.league_snapshot(args.sleeper_user, args.season)
+    except OSError as e:
+        print(f"warning: Sleeper data skipped ({e})")
     (ROOT / "web").mkdir(exist_ok=True)
-    (ROOT / "web" / "data.json").write_text(json.dumps({"meta": meta, "players": players}, separators=(",", ":")))
+    (ROOT / "web" / "data.json").write_text(json.dumps(data, separators=(",", ":")))
+    n_map = sum(1 for p in players if p["sid"])
+    print(f"Sleeper ids mapped for {n_map}/{len(players)} players")
     print(f"wrote {csv} and web/data.json ({len(players)} players)")
     print(base.sort_values("vorp_ppr", ascending=False)[cols].head(40).round(1).to_string())
 

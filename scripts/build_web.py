@@ -1,5 +1,11 @@
-"""Bundle rankings + backtest results into the single-file calculator web/index.html."""
+"""Bundle rankings + backtest results into the calculator.
+
+Writes two builds from web/template.html:
+  web/index.html  single file, for the claude.ai artifact or opening locally
+  site/           installable web app (manifest, offline cache, icons) for GitHub Pages or any static host
+"""
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -50,8 +56,24 @@ def main():
         data["meta"]["package"] = json.loads(pw.read_text())
     tpl = (ROOT / "web" / "template.html").read_text()
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    (ROOT / "web" / "index.html").write_text(tpl.replace("/*__DATA__*/", payload))
-    print("wrote web/index.html")
+    page = tpl.replace("/*__DATA__*/", payload)
+    (ROOT / "web" / "index.html").write_text(page.replace("<!--__PWA__-->\n", ""))
+
+    site = ROOT / "site"
+    site.mkdir(exist_ok=True)
+    head = ('<link rel="manifest" href="manifest.webmanifest">\n'
+            '<meta name="theme-color" content="#22603f">\n'
+            '<link rel="icon" href="icon-192.png">\n<link rel="apple-touch-icon" href="icon-192.png">\n'
+            '<meta name="apple-mobile-web-app-capable" content="yes">')
+    body = page.replace("<!--__PWA__-->", head)
+    doc = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+           '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+           '<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}'
+           'body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>\n')
+    (site / "index.html").write_text(doc + body + "\n</body></html>\n")
+    for f in (ROOT / "web" / "pwa").iterdir():
+        shutil.copy(f, site / f.name)
+    print("wrote web/index.html and site/")
 
 
 if __name__ == "__main__":
