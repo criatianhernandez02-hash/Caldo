@@ -90,6 +90,11 @@ def main():
             "ros": {s: round(float(r[f"ros_{s}"]), 1) for s in ["ppr", "half", "std"]},
             "td": round(float(r.ros_td), 1),
             "szn_ppg": None if pd.isna(r.szn_pts) else round(float(r.szn_pts), 1),
+            # season-to-date points per game in both formats: the "box score" view most managers trade on
+            "szn": None if pd.isna(r.szn_pts) else {
+                "ppr": round(float(r.szn_pts), 2),
+                "std": round(float(np.nan_to_num(tables["std"].szn_pts.get(pid, np.nan), nan=r.szn_pts)), 2)},
+            "sg": int(r.szn_g),
             "gl": int(r.games_left), "xg": round(float(r.exp_games), 2),
             "sched": round(float(r.sched_ease), 3), "next": r.next_opp,
             "weekly": wk,

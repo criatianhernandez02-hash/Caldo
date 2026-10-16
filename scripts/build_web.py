@@ -45,6 +45,11 @@ def backtest_summary(scoring="ppr"):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--snapshot", help="JSON file with a sleeper_snapshot to bundle (kept out of the repo)")
+    ap.add_argument("--out", help="with --snapshot: where to write the single-file page")
+    args = ap.parse_args()
     data = json.loads((ROOT / "web" / "data.json").read_text())
     if (OUT_DIR / "backtest" / "weekly_summary_ppr.csv").exists():
         data["meta"]["backtest"] = backtest_summary()
@@ -57,6 +62,12 @@ def main():
     tpl = (ROOT / "web" / "template.html").read_text()
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     page = tpl.replace("/*__DATA__*/", payload)
+    if args.snapshot:
+        data["sleeper_snapshot"] = json.loads(Path(args.snapshot).read_text())
+        bundled = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+        Path(args.out).write_text(tpl.replace("/*__DATA__*/", bundled).replace("<!--__PWA__-->\n", ""))
+        print(f"wrote {args.out} with a bundled Sleeper league")
+        return
     (ROOT / "web" / "index.html").write_text(page.replace("<!--__PWA__-->\n", ""))
 
     site = ROOT / "site"

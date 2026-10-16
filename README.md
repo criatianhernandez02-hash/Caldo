@@ -14,7 +14,7 @@ Open the **Sleeper league** tab and enter your Sleeper username. The app reads y
 * **Free-agent replacement level.** A player's value is measured against the best player nobody in *your* league rosters.
 * **Power rankings.** Every team's projected starting-lineup points for the rest of the season.
 * **Both sides of a trade.** Your lineup change and your partner's, with a "likely to accept / decline" read.
-* **Trade finder.** Searches 1-for-1, 2-for-1 and 1-for-2 deals with every team for trades that raise your starter points without lowering theirs.
+* **Trade finder tab.** Searches 1-for-1, 2-for-1, 1-for-2 and 2-for-2 deals with every team for trades that raise your starting lineup *and* have a fair chance of a yes. Your gain uses the model; their odds weigh (a) how much the deal changes their starting lineup and (b) how fair it looks by this season's box scores (points per game so far), which is how most managers size up an offer. It labels each deal Likely yes / Worth a try / Long shot. You can filter by partner, position wanted and deal size, mark players to keep, and see Sell high / Buy low lists where box scores and projections disagree. The odds are a heuristic: `sigmoid(0.12 × their lineup change + 0.04 × box-score value gap)`, not yet calibrated on real accepted trades.
 * **Rankings.** Shows who rosters each player, has a free-agents filter, and shows Sleeper injury tags.
 
 Sleeper player IDs are mapped to nflverse IDs through the DynastyProcess crosswalk, with name matching as a fallback (474 of 475 projected players map).

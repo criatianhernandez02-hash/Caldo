@@ -32,6 +32,7 @@
   --qb: #a68af0; --rb: #4fc1ad; --wr: #78a4f0; --te: #e5915f; --kd: #9aa59f; --pos-ink: #0d1512; color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--turf); }
 .wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -141,6 +142,31 @@ tr.tierbreak td { background: color-mix(in srgb, var(--flag) 12%, transparent); 
 .idea .gains b { font-weight: 500; font-size: 16px; }
 @media (max-width: 560px) { .idea { grid-template-columns: 1fr; } }
 
+.finder-controls { display: grid; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; }
+.ctlrow { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+.ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ctl select { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); max-width: 100%; }
+.keep { display: flex; flex-wrap: wrap; gap: 6px; }
+.keep .chip[aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: var(--card); }
+.finder { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; margin-top: 16px; align-items: start; }
+@media (max-width: 900px) { .finder { grid-template-columns: 1fr; } }
+.deal { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; display: grid; gap: 8px; }
+.deal-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 12px; }
+.deal-top .with { font-size: 12px; color: var(--muted); }
+.odds { font: 700 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 4px 8px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+.swap { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; }
+.swap .arrow { font-family: var(--display); font-size: 22px; color: var(--muted); }
+.swap ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; min-width: 0; }
+.swap li { display: flex; gap: 6px; align-items: center; min-width: 0; font-weight: 600; }
+.swap li span.nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deal-nums { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--mono); font-size: 13px; align-items: baseline; }
+.deal-nums b { font-size: 18px; font-weight: 500; }
+.why-list { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); display: grid; gap: 2px; }
+.mkt { display: grid; gap: 12px; }
+.mkt .panel h3 { font-size: 20px; }
+.mkt table { font-size: 13px; }
+.mkt td { padding: 5px 8px; }
+.progress { font: 500 13px var(--mono); color: var(--muted); }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 .panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; min-width: 0; }
 .panel h3 { font-size: 22px; text-transform: uppercase; margin-bottom: 8px; }
@@ -175,6 +201,7 @@ tr.tierbreak td { background: color-mix(in srgb, var(--flag) 12%, transparent); 
 <div class="wrap">
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="trade">Trade</button>
+    <button role="tab" aria-selected="false" data-tab="finder">Trade finder</button>
     <button role="tab" aria-selected="false" data-tab="league">Sleeper league</button>
     <button role="tab" aria-selected="false" data-tab="rank">Rankings</button>
     <button role="tab" aria-selected="false" data-tab="how">Formula &amp; backtest</button>
@@ -222,6 +249,8 @@ tr.tierbreak td { background: color-mix(in srgb, var(--flag) 12%, transparent); 
       </details>
     </section>
 
+    <section id="pane-finder" hidden></section>
+
     <section id="pane-league" hidden></section>
 
     <section id="pane-rank" hidden>
@@ -266,7 +295,7 @@ const store = {
 const S = {
   preset: store.get('scoring', 'ppr'), teams: store.get('teams', 12),
   give: [], get: [], roster: store.get('roster', []).filter(i => byId[i]), pos: 'ALL', q: '',
-  lg: null, leagues: [], user: null, partner: null, anyPlayer: false, ideas: null, status: '', statusErr: false
+  lg: null, leagues: [], user: null, partner: null, anyPlayer: false, status: '', statusErr: false
 };
 const saved = store.get('trade', null);
 if (saved && saved.give.every(i => byId[i]) && saved.get.every(i => byId[i])) { S.give = saved.give; S.get = saved.get; }
@@ -281,15 +310,21 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 // ---------- scoring & projections ----------
 // Any reception setting is exact: std + (rec + position bonus) x (ppr - std), since that gap is projected catches.
 function scoring() { return S.lg ? S.lg.scoring : { rec: PRESET[S.preset].rec, bonus: {} }; }
-let PTS = {}, WK = {}, REP = {}, TIERS = {};
+let PTS = {}, WK = {}, REP = {}, TIERS = {}, MKT = {}, MREP = {};
 function recompute() {
   const sc = scoring();
   for (const p of P) {
     const r = sc.rec + ((sc.bonus || {})[p.pos] || 0);
     PTS[p.id] = p.ros.std + r * (p.ros.ppr - p.ros.std);
     WK[p.id] = p.weekly.std.map((s, i) => s + r * (p.weekly.ppr[i] - s));
+    // Market view: this season's points per game carried forward, which is how most managers size up an offer.
+    // Early in the season it leans on the projection until there are a few games to go on.
+    const w = p.szn ? Math.min(1, (p.sg || 0) / 4) : 0;
+    const box = p.szn ? (p.szn.std + r * (p.szn.ppr - p.szn.std)) * p.xg : 0;
+    MKT[p.id] = w * box + (1 - w) * PTS[p.id];
   }
   REP = replacement();
+  MREP = replacement(MKT);
   TIERS = tiers();
 }
 const pts = p => PTS[p.id];
@@ -297,8 +332,8 @@ const ppg = p => PTS[p.id] / Math.max(p.xg, .5);
 const slots = () => S.lg ? S.lg.slots : DEFAULT_SLOTS;
 const teamsN = () => S.lg ? S.lg.teams : S.teams;
 
-function replacement() {
-  const out = {};
+function replacement(src = PTS) {
+  const out = {}, pts = p => src[p.id];
   if (S.lg) {  // in a real league, replacement = the best player nobody rosters
     for (const pos of SKILL) {
       const fa = P.filter(p => p.pos === pos && !S.lg.owner[p.id]).map(pts).sort((a, b) => b - a);
@@ -318,6 +353,7 @@ function replacement() {
   return out;
 }
 const value = p => Math.max(0, pts(p) - REP[p.pos]);
+const mvalue = p => Math.max(0, MKT[p.id] - MREP[p.pos]);
 function packageValue(ids, weights) {
   const v = ids.map(i => value(byId[i])).sort((a, b) => b - a);
   let tot = 0; const parts = [];
@@ -414,7 +450,7 @@ async function loadLeague(id) {
   } catch (e) { S.status = 'Could not load that league from Sleeper (' + e.message + '). Try again in a minute.'; S.statusErr = true; renderLeague(); return; }
   store.set('sleeper_league', id);
   S.lg = buildLeague(entry);
-  S.partner = null; S.ideas = null; S.status = ''; S.anyPlayer = false;
+  S.partner = null; S.status = ''; S.anyPlayer = false; F.results = null;
   const me = myTeam();
   if (me) S.roster = me.players.slice();
   S.give = S.give.filter(i => me && me.players.includes(i));
@@ -447,33 +483,154 @@ function buildLeague(e) {
 const teamOf = rid => S.lg.teams_.find(t => t.rid === rid);
 const myTeam = () => S.lg && S.lg.teams_.find(t => t.mine);
 function disconnect() {
-  S.lg = null; S.user = null; S.leagues = []; S.partner = null; S.ideas = null; S.status = '';
+  S.lg = null; S.user = null; S.leagues = []; S.partner = null; S.status = '';
   store.set('sleeper_user', null); store.set('sleeper_league', null); refresh();
 }
 
 // ---------- trade finder ----------
-function findTrades() {
-  const me = myTeam(); if (!me) return [];
-  const top = (t, n) => t.players.filter(i => value(byId[i]) > 0).sort((a, b) => value(byId[b]) - value(byId[a])).slice(0, n);
-  const myBase = lineupROS(me.players), mine = top(me, 9), out = [];
-  for (const t of S.lg.teams_) {
-    if (t === me) continue;
-    const theirBase = lineupROS(t.players), theirs = top(t, 9), deals = [];
-    const consider = (give, get) => {
-      const a = lineupROS(me.players.filter(i => !give.includes(i)).concat(get)) - myBase;
-      if (a < 4) return;
-      const b = lineupROS(t.players.filter(i => !get.includes(i)).concat(give)) - theirBase;
-      if (b < 0) return;
-      deals.push({ give, get, me: a, them: b, team: t.rid, score: Math.min(a, b * 1.5) + a * .25 });
-    };
-    for (const g of mine) for (const r of theirs) consider([g], [r]);
-    for (let i = 0; i < mine.length; i++) for (let j = i + 1; j < mine.length; j++) for (const r of theirs) consider([mine[i], mine[j]], [r]);
-    for (const g of mine) for (let i = 0; i < theirs.length; i++) for (let j = i + 1; j < theirs.length; j++) consider([g], [theirs[i], theirs[j]]);
-    deals.sort((x, y) => y.score - x.score);
-    const seen = new Set();
-    for (const d of deals) { const k = d.get.join(); if (seen.has(k)) continue; seen.add(k); out.push(d); if (seen.size >= 3) break; }
+// Your side is judged by projected starting-lineup points. Their side is judged the way people actually
+// decide: does it help my lineup, and does it look fair by this season's box scores?
+const F = { results: null, running: false, token: 0, partner: 0, want: 'ANY', shapes: ['1-1', '2-1', '1-2', '2-2'], min: 5, progress: '' };
+const keepKey = () => 'keep.' + (S.lg ? S.lg.id : '');
+const sigmoid = z => 1 / (1 + Math.exp(-z));
+function acceptance(theirDelta, fairness) {
+  // Heuristic: about even odds for a deal that leaves their lineup flat and looks even on paper.
+  return sigmoid(0.12 * theirDelta + 0.04 * fairness);
+}
+const oddsLabel = p => p >= .65 ? ['good', 'Likely yes'] : p >= .45 ? ['warn', 'Worth a try'] : ['bad', 'Long shot'];
+function combos(arr, k) { if (k === 1) return arr.map(x => [x]); const out = []; for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]); return out; }
+function runFinder() {
+  const me = myTeam(); if (!me) return;
+  const keep = new Set(store.get(keepKey(), []));
+  const byVal = (t, n, extra = () => true) => t.players.filter(i => value(byId[i]) > 0 || mvalue(byId[i]) > 0).filter(extra)
+    .sort((a, b) => Math.max(value(byId[b]), mvalue(byId[b])) - Math.max(value(byId[a]), mvalue(byId[a]))).slice(0, n);
+  const mine = byVal(me, 10, i => !keep.has(i));
+  const myBase = lineupROS(me.players);
+  const teams = S.lg.teams_.filter(t => t !== me && (!F.partner || t.rid === F.partner));
+  const mkt = ids => packageValue2(ids);
+  const out = [];
+  F.running = true; F.results = null; let ti = 0;
+  const token = ++F.token;  // a newer search cancels this one
+  const step = () => {
+    if (token !== F.token) return;
+    const t = teams[ti];
+    if (!t) { F.running = false; F.results = pickDeals(out); renderFinder(); return; }
+    F.progress = `Checking ${t.name} (${ti + 1} of ${teams.length})…`; renderFinder();
+    const theirBase = lineupROS(t.players), theirs = byVal(t, 10);
+    for (const shape of F.shapes) {
+      const [ng, nr] = shape.split('-').map(Number);
+      for (const give of combos(mine, ng)) for (const get of combos(theirs, nr)) {
+        if (F.want !== 'ANY' && !get.some(i => byId[i].pos === F.want)) continue;
+        const a = lineupROS(me.players.filter(i => !give.includes(i)).concat(get)) - myBase;
+        if (a < F.min) continue;
+        const b = lineupROS(t.players.filter(i => !get.includes(i)).concat(give)) - theirBase;
+        if (b < -12) continue;
+        const fair = mkt(give) - mkt(get);  // what they see coming in minus going out
+        const p = acceptance(b, fair);
+        if (p < .3) continue;
+        out.push({ give, get, me: a, them: b, fair, p, team: t.rid, score: a * p });
+      }
+    }
+    ti++; setTimeout(step, 0);
+  };
+  setTimeout(step, 0);
+}
+function packageValue2(ids) {  // market (box-score) value of a package, with the same depth discount
+  const v = ids.map(i => mvalue(byId[i])).sort((a, b) => b - a);
+  return v.reduce((s, x, k) => s + x * GET_W[Math.min(k, GET_W.length - 1)], 0);
+}
+function pickDeals(all) {
+  all.sort((x, y) => y.score - x.score);
+  const res = [], perTeam = {}, usedGet = new Set();
+  for (const d of all) {
+    const k = d.get.slice().sort().join() + '|' + d.give.slice().sort().join();
+    if (usedGet.has(k) || (perTeam[d.team] || 0) >= 4) continue;
+    if (res.some(r => r.team === d.team && r.get.join() === d.get.join())) continue;
+    usedGet.add(k); perTeam[d.team] = (perTeam[d.team] || 0) + 1; res.push(d);
+    if (res.length >= 20) break;
   }
-  return out.sort((x, y) => y.score - x.score).slice(0, 15);
+  return res;
+}
+function reasons(d) {
+  const t = teamOf(d.team), out = [];
+  if (d.them > 3) out.push(`Improves ${esc(t.name)}'s starting lineup by ${fmt(d.them)} points.`);
+  else if (d.them > -3) out.push(`Leaves ${esc(t.name)}'s lineup about where it is.`);
+  else out.push(`Costs ${esc(t.name)} ${fmt(-d.them)} lineup points, so it rests on the box-score appeal.`);
+  if (d.fair > 5) out.push(`Looks like a win for them by this season's stats (+${fmt(d.fair)} in box-score value).`);
+  else if (d.fair > -5) out.push('Looks even by this season\'s stats.');
+  for (const i of d.give) { const p = byId[i], m = MKT[i], v = PTS[i];
+    if (p.sg >= 3 && m > v * 1.15 && m - v > 8) out.push(`Selling high on ${esc(p.name)}: ${fmt(ppgMarket(p))} pts/g so far, projected ${fmt(ppg(p))} from here.`); }
+  for (const i of d.get) { const p = byId[i], m = MKT[i], v = PTS[i];
+    if (p.sg >= 3 && v > m * 1.15 && v - m > 8) out.push(`Buying low on ${esc(p.name)}: ${fmt(ppgMarket(p))} pts/g so far, projected ${fmt(ppg(p))} from here.`); }
+  return out;
+}
+const ppgMarket = p => MKT[p.id] / Math.max(p.xg, .5);
+function marketGaps() {
+  const me = myTeam(), sell = [], buy = [];
+  for (const p of P) {
+    if (!p.szn || p.sg < 3 || !S.lg.owner[p.id]) continue;
+    const gap = PTS[p.id] - MKT[p.id];
+    if (S.lg.owner[p.id] === me.rid && gap < -8) sell.push([p, gap]);
+    if (S.lg.owner[p.id] !== me.rid && gap > 8) buy.push([p, gap]);
+  }
+  sell.sort((a, b) => a[1] - b[1]); buy.sort((a, b) => b[1] - a[1]);
+  return { sell: sell.slice(0, 6), buy: buy.slice(0, 8) };
+}
+function renderFinder() {
+  const pane = $('#pane-finder'), me = myTeam();
+  if (!S.lg || !me) {
+    pane.innerHTML = `<div class="connect"><h2>Trade finder</h2><p class="note" style="margin:0">${S.lg ? `${esc(S.user.display_name)} doesn't manage a team in ${esc(S.lg.name)}.` : 'Connect your Sleeper league first. The finder needs every roster in your league to know who has what and who needs what.'}</p>
+      <button class="btn" id="to-league" style="justify-self:start">Connect Sleeper</button></div>`;
+    $('#to-league').onclick = () => showTab('league'); return;
+  }
+  const keep = new Set(store.get(keepKey(), []));
+  const myPlayers = me.players.slice().sort((a, b) => value(byId[b]) - value(byId[a]));
+  const gaps = marketGaps();
+  const nm = (i) => `<li><span class="pos ${byId[i].pos}">${byId[i].pos}</span><span class="nm">${esc(byId[i].name)}</span>${injBadge(byId[i])}</li>`;
+  const cards = F.results ? (F.results.length ? F.results.map((d, k) => { const [cls, lab] = oddsLabel(d.p), t = teamOf(d.team);
+    return `<article class="deal">
+      <div class="deal-top"><div><div class="with">with ${esc(t.name)} · ${esc(t.manager)}</div></div><span class="odds ${cls}">${lab}</span></div>
+      <div class="swap"><div><div class="label">You give</div><ul>${d.give.map(nm).join('')}</ul></div><div class="arrow">⇄</div><div><div class="label">You get</div><ul>${d.get.map(nm).join('')}</ul></div></div>
+      <div class="deal-nums"><span>your lineup <b class="good">${sgn(d.me)}</b></span><span>their lineup <b class="${d.them > .5 ? 'good' : d.them < -.5 ? 'bad' : 'warn'}">${sgn(d.them)}</b></span><span>box-score look <b>${sgn(d.fair)}</b></span></div>
+      <ul class="why-list">${reasons(d).map(r => `<li>${r}</li>`).join('')}</ul>
+      <button class="add" data-open="${k}" style="justify-self:start">Open in calculator</button>
+    </article>`; }).join('')
+    : `<p class="note">No deal found that adds at least ${F.min} points to your lineup with a fair chance of a yes. Try a lower minimum gain, more deal sizes, or unlock a player.</p>`)
+    : `<p class="progress">${esc(F.progress || 'Searching…')}</p>`;
+  const gapRow = (team) => ([p]) => `<tr><td><span class="pos ${p.pos}">${p.pos}</span> ${esc(p.name)}${team ? `<div class="note">${esc(teamOf(S.lg.owner[p.id]).name)}</div>` : ''}</td><td class="n">${fmt(ppgMarket(p))}</td><td class="n">${fmt(ppg(p))}</td></tr>`;
+  pane.innerHTML = `
+    <p class="lede">Deals that raise your starting lineup and give the other manager a reason to say yes. Your gain uses the model's projections. Their odds weigh how much the deal helps their lineup and how fair it looks by this season's box scores, which is how most managers judge an offer.</p>
+    <div class="finder-controls">
+      <div class="ctlrow">
+        <label class="ctl"><span class="label">Partner</span><select id="f-partner"><option value="0">All teams</option>${S.lg.teams_.filter(t => !t.mine).map(t => `<option value="${t.rid}" ${F.partner === t.rid ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
+        <div class="ctl"><span class="label">I want</span>${['ANY', ...SKILL].map(p => `<button class="chip" data-want="${p}" aria-pressed="${F.want === p}">${p === 'ANY' ? 'Any' : p}</button>`).join('')}</div>
+        <div class="ctl"><span class="label">Deal sizes</span>${['1-1', '2-1', '1-2', '2-2'].map(sh => `<button class="chip" data-shape="${sh}" aria-pressed="${F.shapes.includes(sh)}">${sh.replace('-', ' for ')}</button>`).join('')}</div>
+        <label class="ctl"><span class="label">Min gain</span><select id="f-min">${[3, 5, 10, 15].map(m => `<option value="${m}" ${F.min === m ? 'selected' : ''}>+${m} pts</option>`).join('')}</select></label>
+      </div>
+      <div class="ctl"><span class="label">Keep</span><div class="keep">${myPlayers.map(i => `<button class="chip" data-keep="${i}" aria-pressed="${keep.has(i)}" title="Never offer this player">${esc(byId[i].name)}</button>`).join('')}</div></div>
+      <div class="ctlrow"><button class="btn" id="f-run" ${F.running ? 'disabled' : ''}>${F.running ? 'Searching…' : 'Find trades'}</button><span class="note">Tap a player under Keep to leave them out of every offer.</span></div>
+    </div>
+    <div class="finder">
+      <div class="ideas">${cards}</div>
+      <aside class="mkt">
+        <div class="panel"><h3>Sell high</h3><p class="note">Points per game so far vs. projected from here. Your players whose stats so far run ahead of the projection. Other managers will value them more than the model does.</p>
+          ${gaps.sell.length ? `<div class="tablebox"><table><thead><tr><th>Player</th><th class="n">So far</th><th class="n">Proj.</th></tr></thead><tbody>${gaps.sell.map(gapRow(false)).join('')}</tbody></table></div>` : '<p class="note">None of your players are running hot right now.</p>'}</div>
+        <div class="panel"><h3>Buy low</h3><p class="note">Players on other rosters whose projection runs ahead of their stats so far. Their managers may undervalue them.</p>
+          ${gaps.buy.length ? `<div class="tablebox"><table><thead><tr><th>Player</th><th class="n">So far</th><th class="n">Proj.</th></tr></thead><tbody>${gaps.buy.map(gapRow(true)).join('')}</tbody></table></div>` : '<p class="note">No clear buy-low targets right now.</p>'}</div>
+        <p class="note">Odds of a yes are an estimate from lineup impact and box-score fairness. They haven't been tested against real accepted trades.</p>
+      </aside>
+    </div>`;
+  const rerun = () => { F.results = null; runFinder(); };
+  $('#f-partner').onchange = e => { F.partner = +e.target.value; rerun(); };
+  $('#f-min').onchange = e => { F.min = +e.target.value; rerun(); };
+  pane.querySelectorAll('[data-want]').forEach(b => b.onclick = () => { F.want = b.dataset.want; rerun(); });
+  pane.querySelectorAll('[data-shape]').forEach(b => b.onclick = () => { const sh = b.dataset.shape;
+    F.shapes = F.shapes.includes(sh) ? F.shapes.filter(x => x !== sh) : [...F.shapes, sh]; if (!F.shapes.length) F.shapes = ['1-1']; rerun(); });
+  pane.querySelectorAll('[data-keep]').forEach(b => b.onclick = () => { const k = new Set(store.get(keepKey(), [])), id = b.dataset.keep;
+    k.has(id) ? k.delete(id) : k.add(id); store.set(keepKey(), [...k]); rerun(); });
+  $('#f-run').onclick = rerun;
+  pane.querySelectorAll('[data-open]').forEach(b => b.onclick = () => { const d = F.results[+b.dataset.open];
+    S.give = d.give.slice(); S.get = d.get.slice(); S.partner = d.team; S.example = false; saveTrade(); showTab('trade'); renderTrade(); });
 }
 
 // ---------- header & tabs ----------
@@ -491,9 +648,10 @@ $('#lgpill').onclick = () => showTab('league');
 document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(t) {
   document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-selected', x.dataset.tab === t));
-  for (const k of ['trade', 'league', 'rank', 'how']) $('#pane-' + k).hidden = k !== t;
+  for (const k of ['trade', 'finder', 'league', 'rank', 'how']) $('#pane-' + k).hidden = k !== t;
+  if (t === 'finder' && S.lg && myTeam() && !F.results && !F.running) runFinder();
 }
-if (['league', 'rank', 'how'].includes(location.hash.slice(1))) showTab(location.hash.slice(1));
+if (['finder', 'league', 'rank', 'how'].includes(location.hash.slice(1))) showTab(location.hash.slice(1));
 
 // ---------- search ----------
 function wireSearch(input, onPick, pool) {
@@ -616,9 +774,10 @@ function renderImpact() {
   let them = '';
   if (owners.length === 1 && owners[0]) {
     const t = teamOf(owners[0]), th = lineupDelta(t.players, S.get, S.give);
-    const odds = th.d > 5 ? ['good', 'Likely to accept'] : th.d > -5 ? ['warn', 'Could go either way'] : ['bad', 'Likely to decline'];
-    them = `<div><div class="label">${esc(t.name)}'s lineup</div><div class="bigdelta ${odds[0]}">${sgn(th.d)}</div>
-      <div class="mono note">${fmt(th.b, 0)} → ${fmt(th.a, 0)}</div><div class="${odds[0]}" style="font-weight:600">${odds[1]}</div></div>`;
+    const fair = packageValue2(S.give) - packageValue2(S.get);
+    const [cls, lab] = oddsLabel(acceptance(th.d, fair));
+    them = `<div><div class="label">${esc(t.name)}'s lineup</div><div class="bigdelta ${th.d > .5 ? 'good' : th.d < -.5 ? 'bad' : 'warn'}">${sgn(th.d)}</div>
+      <div class="mono note">${fmt(th.b, 0)} → ${fmt(th.a, 0)} · box-score look ${sgn(fair)}</div><div class="${cls}" style="font-weight:600">${lab}</div></div>`;
   }
   box.innerHTML = `<div><div class="label">Your starting lineup, weeks ${META.week}–17</div>
     <div class="bigdelta ${mine.d > .5 ? 'good' : mine.d < -.5 ? 'bad' : 'warn'}">${sgn(mine.d)}</div>
@@ -680,23 +839,13 @@ function renderLeague() {
       <td class="n">${t.w}-${t.l}${t.t ? '-' + t.t : ''}</td><td class="n">${fmt(proj, 0)}</td><td style="white-space:normal;min-width:220px">${best(t) || '<span class="note">No projected players</span>'}</td>
       <td>${t.mine ? '' : `<button class="add" data-tw="${t.rid}">Trade with</button>`}</td></tr>`).join('')}
     </tbody></table></div>
-    ${me ? `<h3 class="sect">Trades that help both teams</h3>
-    <p class="note">Searches 1-for-1, 2-for-1 and 1-for-2 swaps with every team for deals that raise your projected starter points without lowering theirs.</p>
-    <button class="btn" id="find">${S.ideas ? 'Search again' : 'Find trades'}</button>
-    <div class="ideas" id="ideas">${renderIdeas()}</div>` : ''}`;
+    ${me ? `<h3 class="sect">Looking for a deal?</h3>
+    <p class="note">The trade finder searches every roster in this league for trades that raise your starting lineup and give the other manager a reason to say yes.</p>
+    <button class="btn" id="go-finder">Open trade finder</button>` : ''}`;
   const sel = $('#lgsel'); if (sel) sel.onchange = e => loadLeague(e.target.value);
   $('#disc').onclick = disconnect;
   pane.querySelectorAll('[data-tw]').forEach(b => b.onclick = () => { S.partner = +b.dataset.tw; S.give = []; S.get = []; S.example = false; saveTrade(); showTab('trade'); renderTrade(); });
-  const f = $('#find'); if (f) f.onclick = () => { f.disabled = true; f.textContent = 'Searching…'; setTimeout(() => { S.ideas = findTrades(); renderLeague(); }, 30); };
-  pane.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => { const d = S.ideas[+b.dataset.idea];
-    S.give = d.give.slice(); S.get = d.get.slice(); S.partner = d.team; S.example = false; saveTrade(); showTab('trade'); renderTrade(); });
-}
-function renderIdeas() {
-  if (!S.ideas) return '';
-  if (!S.ideas.length) return '<p class="note">No trade raises your lineup without lowering theirs right now. Your roster may already fit this league well.</p>';
-  const names = ids => ids.map(i => `<b>${esc(byId[i].name)}</b> <span class="note">${byId[i].pos}</span>`).join(' + ');
-  return S.ideas.map((d, k) => `<div class="idea"><div class="deal"><div class="with">with ${esc(teamOf(d.team).name)}</div>Give ${names(d.give)} · Get ${names(d.get)}</div>
-    <div class="gains"><span>you <b class="good">${sgn(d.me)}</b></span><span>them <b class="${d.them > .5 ? 'good' : 'warn'}">${sgn(d.them)}</b></span><button class="add" data-idea="${k}">Open</button></div></div>`).join('');
+  const gf = $('#go-finder'); if (gf) gf.onclick = () => showTab('finder');
 }
 
 // ---------- rankings ----------
@@ -826,7 +975,8 @@ Trade value = ROS value − replacement level</div>
     <p class="note">These generic weights explain ${Math.round(pk.r2 * 100)}% of how much a trade changes a team's lineup, about the same as a plain sum (${Math.round(pk.r2_plain_sum * 100)}%). The rest depends on the roster you already have, which is why connecting your Sleeper league gives the better read.</p></div>` : ''}`;
 }
 
-function refresh() { recompute(); renderHeader(); renderTrade(); renderLeague(); renderRank(); }
+function refresh() { recompute(); renderHeader(); renderTrade(); renderLeague(); renderRank();
+  if (!F.running) { if (F.results) F.results = null; renderFinder(); if (!$('#pane-finder').hidden && S.lg && myTeam()) runFinder(); } }
 refresh(); renderHow();
 const savedUser = store.get('sleeper_user', null);
 if (savedUser) connect(savedUser);
