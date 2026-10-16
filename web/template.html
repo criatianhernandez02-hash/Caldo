@@ -1,0 +1,515 @@
+<title>Caldo Trade Calculator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=Public+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a coach's play sheet. Sticky scoreboard header, tabs, then a
+   two-column trade card with a yard-line verdict field beneath. */
+:root {
+  --paper: #f1f4ef; --card: #ffffff; --ink: #14211c; --muted: #5a6a61; --line: #d3dbd3;
+  --turf: #22603f; --turf-2: #2a6e4a; --chalk: #f4f7f2; --flag: #d99e00; --flag-ink: #1d1600;
+  --good: #1d7a4b; --bad: #b2432c; --warn: #9a6a00;
+  --qb: #7b55c7; --rb: #1f7a6b; --wr: #2f62b8; --te: #b4572a; --pos-ink: #ffffff;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "Public Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1512; --card: #131e19; --ink: #e5ece6; --muted: #92a399; --line: #26342d;
+    --turf: #17442e; --turf-2: #1c4f36; --chalk: #e9efe9; --flag: #f0b511; --flag-ink: #1d1600;
+    --good: #4cc38a; --bad: #e57a62; --warn: #e2b23c;
+    --qb: #a68af0; --rb: #4fc1ad; --wr: #78a4f0; --te: #e5915f; --pos-ink: #0d1512; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1512; --card: #131e19; --ink: #e5ece6; --muted: #92a399; --line: #26342d;
+  --turf: #17442e; --turf-2: #1c4f36; --chalk: #e9efe9; --flag: #f0b511; --flag-ink: #1d1600;
+  --good: #4cc38a; --bad: #e57a62; --warn: #e2b23c;
+  --qb: #a68af0; --rb: #4fc1ad; --wr: #78a4f0; --te: #e5915f; --pos-ink: #0d1512; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--turf); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.num, td.n, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: .01em; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--flag); outline-offset: 2px; }
+
+/* scoreboard header */
+header.board { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--turf); color: var(--chalk);
+  border-bottom: 3px solid var(--flag); }
+.board .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding-block: 10px; }
+.board h1 { font-size: 30px; font-weight: 800; text-transform: uppercase; line-height: 1; }
+.board h1 span { color: var(--flag); }
+.board .when { font-family: var(--mono); font-size: 12px; opacity: .85; }
+.board .controls { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid color-mix(in srgb, var(--chalk) 35%, transparent); border-radius: var(--r); overflow: hidden; }
+.seg button { background: transparent; border: 0; padding: 5px 10px; color: var(--chalk); cursor: pointer; font-size: 13px; font-weight: 600; }
+.seg button[aria-pressed="true"] { background: var(--flag); color: var(--flag-ink); }
+.board select { background: transparent; color: var(--chalk); border: 1px solid color-mix(in srgb, var(--chalk) 35%, transparent); border-radius: var(--r); padding: 5px 8px; font-size: 13px; }
+.board select option { color: #14211c; background: #fff; }
+nav.tabs { display: flex; gap: 4px; padding-block: 14px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+nav.tabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 14px; cursor: pointer; font-family: var(--display); font-size: 20px; font-weight: 700; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-color: var(--flag); }
+main { padding-block: 20px 60px; }
+.label { font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.lede { color: var(--muted); max-width: 68ch; margin: 0 0 18px; }
+
+/* trade card */
+.sides { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .sides { grid-template-columns: 1fr; } }
+.side { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.side header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.side h2 { font-size: 26px; text-transform: uppercase; }
+.side .total { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.side .total b { font-size: 20px; color: var(--ink); font-weight: 500; }
+.search { position: relative; }
+.search input { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); }
+.results { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 4; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 8px 24px rgb(0 0 0 / .14); max-height: 300px; overflow-y: auto; }
+.results button { display: flex; width: 100%; gap: 10px; align-items: center; padding: 8px 10px; background: none; border: 0; text-align: left; cursor: pointer; }
+.results button:hover, .results button.active { background: color-mix(in srgb, var(--flag) 16%, transparent); }
+.results .meta { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.pieces { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.piece { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); }
+.piece .who { min-width: 0; }
+.piece .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.piece .sub { font-size: 12px; color: var(--muted); }
+.piece .val { text-align: right; font-family: var(--mono); font-size: 13px; }
+.piece .val b { display: block; font-size: 16px; font-weight: 500; }
+.piece .x { background: none; border: 0; cursor: pointer; color: var(--muted); font-size: 18px; padding: 0 4px; }
+.empty { color: var(--muted); font-size: 13px; padding: 6px 2px; }
+.pos { display: inline-block; min-width: 30px; text-align: center; font: 700 11px/1 var(--mono); padding: 4px 5px; border-radius: 4px; color: var(--pos-ink); }
+.pos.QB { background: var(--qb); } .pos.RB { background: var(--rb); } .pos.WR { background: var(--wr); } .pos.TE { background: var(--te); }
+.tier { font: 600 11px/1 var(--mono); padding: 3px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+
+/* verdict field */
+.verdict { margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 14px; }
+.verdict .call { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.verdict .call h2 { font-size: 34px; text-transform: uppercase; line-height: 1; }
+.verdict .call .why { color: var(--muted); }
+.field { width: 100%; height: auto; display: block; border-radius: 4px; }
+.math { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 24px; font-size: 13px; color: var(--muted); }
+.math .mono { color: var(--ink); }
+details.roster { margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 16px; }
+details.roster summary { cursor: pointer; font-family: var(--display); font-size: 20px; font-weight: 700; text-transform: uppercase; }
+.roster-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 12px; }
+@media (max-width: 760px) { .roster-grid { grid-template-columns: 1fr; } }
+.lineup-out { display: grid; gap: 8px; align-content: start; }
+.bigdelta { font-family: var(--display); font-size: 44px; font-weight: 800; line-height: 1; }
+.good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 13px; }
+
+/* rankings */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.chip { border: 1px solid var(--line); background: var(--card); border-radius: 20px; padding: 5px 13px; cursor: pointer; font-weight: 600; font-size: 13px; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.filters input { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); min-width: 0; flex: 1 1 160px; max-width: 260px; }
+.tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; position: sticky; top: 0; background: var(--card); }
+td { padding: 7px 10px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); white-space: nowrap; }
+td.n, th.n { text-align: right; }
+tr.tierbreak td { background: color-mix(in srgb, var(--flag) 12%, transparent); font: 700 12px/1.2 var(--mono); color: var(--ink); padding: 6px 10px; letter-spacing: .05em; }
+.add { border: 1px solid var(--line); background: none; border-radius: 4px; padding: 1px 7px; cursor: pointer; font-size: 12px; color: var(--muted); }
+.bar { display: inline-block; height: 8px; border-radius: 2px; background: var(--turf-2); vertical-align: middle; }
+
+/* method */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; min-width: 0; }
+.panel h3 { font-size: 22px; text-transform: uppercase; margin-bottom: 8px; }
+.formula { font-family: var(--mono); font-size: 13.5px; line-height: 1.7; background: var(--paper); border: 1px dashed var(--line); border-radius: var(--r); padding: 12px 14px; overflow-x: auto; white-space: pre; }
+.panel p { margin: 0 0 10px; max-width: 68ch; }
+.chart text { fill: var(--muted); font: 11px var(--mono); }
+.chart .lbl { fill: var(--ink); font: 600 12px var(--body); }
+.keyrow { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.finding { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+.finding b { font-family: var(--mono); font-weight: 500; text-align: right; }
+.note { font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) { #ball { transition: transform .5s cubic-bezier(.3,1.4,.5,1); } }
+</style>
+
+<header class="board">
+  <div class="wrap">
+    <div>
+      <h1>Caldo <span>Trade</span> Calculator</h1>
+      <div class="when" id="when"></div>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Scoring" id="scoring">
+        <button data-v="ppr" aria-pressed="true">PPR</button><button data-v="half" aria-pressed="false">Half</button><button data-v="std" aria-pressed="false">Std</button>
+      </div>
+      <select id="teams" aria-label="League size">
+        <option value="10">10 teams</option><option value="12" selected>12 teams</option><option value="14">14 teams</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-trade" aria-selected="true" data-tab="trade">Trade</button>
+    <button role="tab" id="tab-rank" aria-selected="false" data-tab="rank">Rankings</button>
+    <button role="tab" id="tab-how" aria-selected="false" data-tab="how">Formula &amp; backtest</button>
+  </nav>
+
+  <main>
+    <section id="pane-trade">
+      <p class="lede" id="trade-lede">Values are rest-of-season points above a waiver-wire replacement at the same position. When you receive several players, each one after the best is discounted, because extra bodies often sit on your bench. Players you send away count in full, since a waiver pickup fills their spot.</p>
+      <div class="sides">
+        <section class="side" data-side="give">
+          <header><h2>You give</h2><div class="total">value <b class="num" id="tot-give">0</b></div></header>
+          <div class="search"><input id="q-give" placeholder="Add a player…" autocomplete="off" aria-label="Add a player you give"><div class="results" hidden></div></div>
+          <ul class="pieces" id="list-give"></ul>
+        </section>
+        <section class="side" data-side="get">
+          <header><h2>You get</h2><div class="total">value <b class="num" id="tot-get">0</b></div></header>
+          <div class="search"><input id="q-get" placeholder="Add a player…" autocomplete="off" aria-label="Add a player you get"><div class="results" hidden></div></div>
+          <ul class="pieces" id="list-get"></ul>
+        </section>
+      </div>
+
+      <section class="verdict" aria-live="polite">
+        <div class="call"><h2 id="call">—</h2><span class="why" id="why"></span></div>
+        <svg class="field" id="field" viewBox="0 0 1000 120" role="img" aria-label="Trade balance field"></svg>
+        <div class="math" id="math"></div>
+        <button class="linkbtn" id="clear">Clear trade</button>
+      </section>
+
+      <details class="roster" id="roster-box">
+        <summary>Check it against your roster</summary>
+        <p class="note">Add your current players. The calculator rebuilds your best starting lineup for every remaining week (byes and matchups included) before and after the trade.</p>
+        <div class="roster-grid">
+          <div>
+            <div class="search"><input id="q-roster" placeholder="Add a rostered player…" autocomplete="off" aria-label="Add a player on your roster"><div class="results" hidden></div></div>
+            <ul class="pieces" id="list-roster" style="margin-top:8px"></ul>
+          </div>
+          <div class="lineup-out" id="lineup-out"></div>
+        </div>
+      </details>
+    </section>
+
+    <section id="pane-rank" hidden>
+      <div class="filters">
+        <div role="group" aria-label="Position" id="posf" style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="chip" data-p="ALL" aria-pressed="true">All</button><button class="chip" data-p="QB" aria-pressed="false">QB</button><button class="chip" data-p="RB" aria-pressed="false">RB</button><button class="chip" data-p="WR" aria-pressed="false">WR</button><button class="chip" data-p="TE" aria-pressed="false">TE</button>
+        </div>
+        <input id="rq" placeholder="Filter by name or team" aria-label="Filter rankings">
+      </div>
+      <div class="tablebox"><table id="rtable"></table></div>
+      <p class="note" style="margin-top:10px">ROS = projected points from this week through week 17, already discounted for the chance of missing games. Sched = how much the remaining matchups and venues move a typical player's output. Value = ROS points above replacement.</p>
+    </section>
+
+    <section id="pane-how" hidden></section>
+  </main>
+</div>
+
+<script id="data" type="application/json">/*__DATA__*/</script>
+<script>
+(() => {
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const META = DATA.meta, P = DATA.players;
+const byId = Object.fromEntries(P.map(p => [p.id, p]));
+const W = (META.package && META.package.get_weights) || [1, 0.71, 0.48];  // pieces you receive
+const WG = [1, 1, 1];  // pieces you send away count fully (simulation: 1.00, 1.01, 1.14)
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('caldo.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('caldo.' + k, JSON.stringify(v)); } catch (e) {} }
+};
+const S = {
+  scoring: store.get('scoring', 'ppr'), teams: store.get('teams', 12),
+  give: [], get: [], roster: store.get('roster', []), pos: 'ALL', q: ''
+};
+const saved = store.get('trade', null);
+if (saved && saved.give.every(i => byId[i]) && saved.get.every(i => byId[i])) { S.give = saved.give; S.get = saved.get; }
+else { S.give = pick(['Kyren Williams', 'Zay Flowers']); S.get = pick(['Puka Nacua']); S.example = true; }
+S.roster = S.roster.filter(i => byId[i]);
+function pick(names) { return names.map(n => (P.find(p => p.name === n) || {}).id).filter(Boolean); }
+
+const $ = s => document.querySelector(s);
+const fmt = (x, d = 1) => (x == null || isNaN(x)) ? '–' : x.toFixed(d);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- value model ----------
+function replacement() {
+  const T = S.teams, share = { RB: .45, WR: .5, TE: .05, QB: 0 }, base = { QB: 1, RB: 2, WR: 2, TE: 1 };
+  const out = {};
+  for (const pos of ['QB', 'RB', 'WR', 'TE']) {
+    const rank = Math.round(base[pos] * T + share[pos] * T) + 1;
+    const vals = P.filter(p => p.pos === pos).map(p => p.ros[S.scoring]).sort((a, b) => b - a);
+    out[pos] = vals[Math.min(rank - 1, vals.length - 1)];
+  }
+  return out;
+}
+let REP = replacement();
+const value = p => Math.max(0, p.ros[S.scoring] - REP[p.pos]);
+function packageValue(ids, weights) {
+  const v = ids.map(i => value(byId[i])).sort((a, b) => b - a);
+  let tot = 0; const parts = [];
+  v.forEach((x, k) => { const w = weights[Math.min(k, weights.length - 1)]; tot += w * x; parts.push([x, w]); });
+  return { tot, parts };
+}
+
+// ---------- lineup math ----------
+const SLOTS = { QB: 1, RB: 2, WR: 2, TE: 1 };
+function lineupWeek(ids, wi) {
+  const pts = ids.map(i => ({ pos: byId[i].pos, x: byId[i].weekly[S.scoring][wi] || 0 })).sort((a, b) => b.x - a.x);
+  const used = new Set(); let tot = 0;
+  for (const pos in SLOTS) { let need = SLOTS[pos]; pts.forEach((p, j) => { if (need && p.pos === pos && !used.has(j)) { used.add(j); need--; tot += p.x; } }); }
+  for (let j = 0; j < pts.length; j++) if (!used.has(j) && pts[j].pos !== 'QB') { tot += pts[j].x; break; }
+  return tot;
+}
+const lineupROS = ids => META.weeks.reduce((s, _, wi) => s + lineupWeek(ids, wi), 0);
+
+// ---------- header ----------
+$('#when').textContent = `${META.season} season · projections from week ${META.week} through week 17 · updated ${META.generated}`;
+document.querySelectorAll('#scoring button').forEach(b => {
+  b.setAttribute('aria-pressed', b.dataset.v === S.scoring);
+  b.onclick = () => { S.scoring = b.dataset.v; store.set('scoring', S.scoring);
+    document.querySelectorAll('#scoring button').forEach(x => x.setAttribute('aria-pressed', x === b)); refresh(); };
+});
+$('#teams').value = String(S.teams);
+$('#teams').onchange = e => { S.teams = +e.target.value; store.set('teams', S.teams); refresh(); };
+document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(t) {
+  document.querySelectorAll('nav.tabs button').forEach(x => x.setAttribute('aria-selected', x.dataset.tab === t));
+  for (const k of ['trade', 'rank', 'how']) $('#pane-' + k).hidden = k !== t;
+}
+if (['rank', 'how'].includes(location.hash.slice(1))) showTab(location.hash.slice(1));
+
+// ---------- search boxes ----------
+function wireSearch(input, onPick, exclude) {
+  const box = input.parentElement.querySelector('.results');
+  let items = [], act = 0;
+  function render() {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { box.hidden = true; return; }
+    const ex = new Set(exclude());
+    items = P.filter(p => !ex.has(p.id) && (p.name.toLowerCase().includes(q) || p.team.toLowerCase() === q))
+      .sort((a, b) => value(b) - value(a) || b.ros[S.scoring] - a.ros[S.scoring]).slice(0, 8);
+    act = 0;
+    box.innerHTML = items.length ? items.map((p, j) => `<button type="button" data-i="${j}" class="${j === act ? 'active' : ''}"><span class="pos ${p.pos}">${p.pos}</span><span>${esc(p.name)}</span><span class="meta">${p.team} · ${fmt(p.ros[S.scoring], 0)} pts</span></button>`).join('')
+      : '<div class="empty" style="padding:10px">No projected player matches that name.</div>';
+    box.hidden = false;
+  }
+  function choose(j) { if (!items[j]) return; onPick(items[j].id); input.value = ''; box.hidden = true; }
+  input.addEventListener('input', render);
+  input.addEventListener('keydown', e => {
+    if (box.hidden) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); act = (act + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      box.querySelectorAll('button').forEach((b, j) => b.classList.toggle('active', j === act)); }
+    else if (e.key === 'Enter') { e.preventDefault(); choose(act); }
+    else if (e.key === 'Escape') box.hidden = true;
+  });
+  box.addEventListener('mousedown', e => { const b = e.target.closest('button'); if (b) { e.preventDefault(); choose(+b.dataset.i); } });
+  input.addEventListener('blur', () => setTimeout(() => box.hidden = true, 120));
+}
+const inTrade = () => [...S.give, ...S.get];
+wireSearch($('#q-give'), id => { S.give.push(id); S.example = false; saveTrade(); refresh(); }, inTrade);
+wireSearch($('#q-get'), id => { S.get.push(id); S.example = false; saveTrade(); refresh(); }, inTrade);
+wireSearch($('#q-roster'), id => { S.roster.push(id); store.set('roster', S.roster); refresh(); }, () => S.roster);
+function saveTrade() { store.set('trade', { give: S.give, get: S.get }); }
+$('#clear').onclick = () => { S.give = []; S.get = []; S.example = false; saveTrade(); refresh(); };
+
+function pieceRow(id, side) {
+  const p = byId[id], v = value(p);
+  return `<li class="piece"><span class="pos ${p.pos}">${p.pos}</span>
+    <div class="who"><div class="nm">${esc(p.name)}</div><div class="sub">${p.team} · ${p.pos}${p.tier[S.scoring]} tier · ${fmt(p.ppg)} pts/g · ${fmt(p.xg)} exp. games</div></div>
+    <div class="val"><b>${fmt(v, 1)}</b>${fmt(p.ros[S.scoring], 0)} ROS</div>
+    <button class="x" aria-label="Remove ${esc(p.name)}" data-side="${side}" data-id="${id}">×</button></li>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button.x'); if (!b) return;
+  const arr = S[b.dataset.side]; arr.splice(arr.indexOf(b.dataset.id), 1);
+  if (b.dataset.side === 'roster') store.set('roster', S.roster); else { S.example = false; saveTrade(); }
+  refresh();
+});
+
+// ---------- verdict field ----------
+function drawField(diff, scale) {
+  const svg = $('#field'); const yard = 8.33;
+  let s = `<rect x="0" y="0" width="1000" height="120" fill="var(--turf)"/>`;
+  s += `<rect x="0" y="0" width="${yard * 10}" height="120" fill="var(--bad)" opacity=".85"/>`;
+  s += `<rect x="${1000 - yard * 10}" y="0" width="${yard * 10}" height="120" fill="var(--good)" opacity=".85"/>`;
+  s += `<text x="${yard * 5}" y="66" text-anchor="middle" fill="var(--chalk)" style="font:800 20px var(--display);letter-spacing:.12em" transform="rotate(-90 ${yard * 5} 60)">THEM</text>`;
+  s += `<text x="${1000 - yard * 5}" y="66" text-anchor="middle" fill="var(--chalk)" style="font:800 20px var(--display);letter-spacing:.12em" transform="rotate(90 ${1000 - yard * 5} 60)">YOU</text>`;
+  for (let yd = 5; yd <= 95; yd += 5) {
+    const X = yard * 10 + (yd / 100) * (1000 - yard * 20);
+    s += `<line x1="${X}" x2="${X}" y1="0" y2="120" stroke="var(--chalk)" stroke-opacity="${yd % 10 ? .18 : .45}" stroke-width="${yd === 50 ? 3 : 1.5}"/>`;
+    if (yd % 10 === 0) { const lab = yd <= 50 ? yd : 100 - yd;
+      s += `<text x="${X}" y="22" text-anchor="middle" fill="var(--chalk)" fill-opacity=".8" style="font:700 15px var(--display)">${lab}</text>`;
+      s += `<text x="${X}" y="110" text-anchor="middle" fill="var(--chalk)" fill-opacity=".8" style="font:700 15px var(--display)">${lab}</text>`; }
+  }
+  const t = Math.max(-1, Math.min(1, diff / scale));
+  const bx = yard * 10 + ((50 + 48 * t) / 100) * (1000 - yard * 20);
+  s += `<g id="ball" style="transform:translate(${bx}px,60px)"><ellipse rx="22" ry="13" fill="#7a3e1d" stroke="#3b1c0c" stroke-width="1.5"/><line x1="-9" x2="9" y1="0" y2="0" stroke="#fff" stroke-width="2"/>${[-6, -2, 2, 6].map(x => `<line x1="${x}" x2="${x}" y1="-3.5" y2="3.5" stroke="#fff" stroke-width="1.5"/>`).join('')}</g>`;
+  svg.innerHTML = s;
+}
+
+function renderTrade() {
+  for (const side of ['give', 'get']) {
+    $('#list-' + side).innerHTML = S[side].length ? S[side].map(i => pieceRow(i, side)).join('') : `<li class="empty">Search above to add players.</li>`;
+  }
+  const g = packageValue(S.give, WG), r = packageValue(S.get, W);
+  $('#tot-give').textContent = fmt(g.tot); $('#tot-get').textContent = fmt(r.tot);
+  const diff = r.tot - g.tot, big = Math.max(g.tot, r.tot, 1);
+  const pct = Math.abs(diff) / big;
+  let call, cls, why;
+  if (!S.give.length || !S.get.length) { call = 'Add both sides'; cls = ''; why = 'Pick at least one player to give and one to get.'; }
+  else if (Math.abs(diff) <= Math.max(4, .07 * big)) { call = 'Fair trade'; cls = 'warn'; why = `The sides are within ${fmt(Math.abs(diff))} points over replacement.`; }
+  else if (diff > 0) { call = pct > .25 ? 'Smash accept' : 'You win'; cls = 'good'; why = `You gain about ${fmt(diff)} ROS points over replacement.`; }
+  else { call = pct > .25 ? 'Hard decline' : 'You lose'; cls = 'bad'; why = `You give up about ${fmt(-diff)} ROS points over replacement.`; }
+  if (S.example) why += ' (Example trade. Replace it with your own.)';
+  $('#call').textContent = call; $('#call').className = cls; $('#why').textContent = why;
+  drawField(diff, Math.max(40, big * .6));
+  const line = pk => pk.parts.length ? pk.parts.map(([x, w], k) => k === 0 || w === 1 ? fmt(x) : `${w.toFixed(2)}×${fmt(x)}`).join(' + ') + ` = ${fmt(pk.tot)}` : '0';
+  $('#math').innerHTML = `<div><div class="label">You give</div><span class="mono">${line(g)}</span></div>
+    <div><div class="label">You get</div><span class="mono">${line(r)}</span></div>
+    <div><div class="label">Replacement level (${S.teams} teams)</div><span class="mono">QB ${fmt(REP.QB, 0)} · RB ${fmt(REP.RB, 0)} · WR ${fmt(REP.WR, 0)} · TE ${fmt(REP.TE, 0)}</span></div>`;
+  renderRoster();
+}
+
+function renderRoster() {
+  $('#list-roster').innerHTML = S.roster.length ? S.roster.map(i => pieceRow(i, 'roster')).join('') : '<li class="empty">No players yet.</li>';
+  const out = $('#lineup-out');
+  if (S.roster.length < 7) { out.innerHTML = `<p class="note">Add at least 7 players (a full starting lineup) to see the effect on your weekly lineup.</p>`; return; }
+  const missing = S.give.filter(i => !S.roster.includes(i));
+  const after = S.roster.filter(i => !S.give.includes(i)).concat(S.get.filter(i => !S.roster.includes(i)));
+  const b = lineupROS(S.roster), a = lineupROS(after), d = a - b;
+  out.innerHTML = `<div class="label">Starting lineup, weeks ${META.week}–17</div>
+    <div class="bigdelta ${d > 0.5 ? 'good' : d < -0.5 ? 'bad' : 'warn'}">${d >= 0 ? '+' : ''}${fmt(d)}</div>
+    <div class="mono">${fmt(b, 0)} → ${fmt(a, 0)} projected starter points</div>
+    <p class="note">${missing.length ? `Heads up: ${missing.map(i => esc(byId[i].name)).join(', ')} ${missing.length > 1 ? "aren't" : "isn't"} on your roster yet. ` : ''}This counts only points that would make your starting lineup, so it is the most direct read on whether the trade helps you specifically.</p>`;
+}
+
+// ---------- rankings ----------
+document.querySelectorAll('#posf .chip').forEach(c => c.onclick = () => {
+  S.pos = c.dataset.p; document.querySelectorAll('#posf .chip').forEach(x => x.setAttribute('aria-pressed', x === c)); renderRank(); });
+$('#rq').oninput = e => { S.q = e.target.value.toLowerCase(); renderRank(); };
+function renderRank() {
+  let rows = P.filter(p => S.pos === 'ALL' || p.pos === S.pos);
+  rows.sort((a, b) => S.pos === 'ALL' ? value(b) - value(a) || b.ros[S.scoring] - a.ros[S.scoring] : b.ros[S.scoring] - a.ros[S.scoring]);
+  const ranks = new Map(rows.map((p, i) => [p.id, i + 1]));
+  if (S.q) rows = rows.filter(p => p.name.toLowerCase().includes(S.q) || p.team.toLowerCase().includes(S.q));
+  if (S.pos === 'ALL') rows = rows.slice(0, 200);
+  const maxV = Math.max(...P.map(value), 1);
+  let html = `<thead><tr><th class="n">#</th><th>Player</th><th>Team</th><th>Tier</th><th class="n">ROS pts</th><th class="n">Pts/g</th><th class="n">ROS TD</th><th class="n">Exp. G</th><th class="n">Sched</th><th>Next</th><th class="n">Value</th><th></th></tr></thead><tbody>`;
+  let lastTier = null;
+  for (const p of rows) {
+    const t = p.tier[S.scoring];
+    if (S.pos !== 'ALL' && !S.q && t !== lastTier) { html += `<tr class="tierbreak"><td colspan="12">TIER ${t}</td></tr>`; lastTier = t; }
+    const se = (p.sched - 1) * 100, v = value(p);
+    html += `<tr><td class="n">${ranks.get(p.id)}</td><td><span class="pos ${p.pos}">${p.pos}</span> ${esc(p.name)}</td><td>${p.team}</td>
+      <td><span class="tier">${p.pos}${t}</span></td><td class="n">${fmt(p.ros[S.scoring])}</td><td class="n">${fmt(p.ppg)}</td><td class="n">${fmt(p.td)}</td>
+      <td class="n">${fmt(p.xg)}/${p.gl}</td><td class="n ${se > 1 ? 'good' : se < -1 ? 'bad' : ''}">${se >= 0 ? '+' : ''}${fmt(se)}%</td><td>${p.next}</td>
+      <td class="n"><span class="bar" style="width:${Math.round(40 * v / maxV)}px"></span> ${fmt(v)}</td>
+      <td><button class="add" data-add="${p.id}" aria-label="Add ${esc(p.name)} to the trade">+ trade</button></td></tr>`;
+  }
+  $('#rtable').innerHTML = html + '</tbody>';
+}
+$('#rtable').addEventListener('click', e => {
+  const b = e.target.closest('button[data-add]'); if (!b) return;
+  const id = b.dataset.add; if (!inTrade().includes(id)) { (S.roster.includes(id) ? S.give : S.get).push(id); S.example = false; saveTrade(); }
+  showTab('trade'); refresh();
+});
+
+// ---------- formula & backtest ----------
+function hbar(rows, keys, colors, names, opts = {}) {
+  // rows: [{label, [key]: value}] ; draws grouped horizontal bars on a shared scale
+  const lo = opts.min ?? 0, hi = opts.max ?? 1, w = 560, left = 120, right = 52, bh = 14, gap = 4, group = keys.length * (bh + gap) + 12;
+  const h = rows.length * group + 26, sx = v => left + (Math.max(lo, v) - lo) / (hi - lo) * (w - left - right);
+  let s = `<svg class="chart" viewBox="0 0 ${w} ${h}" width="100%" role="img">`;
+  const ticks = opts.ticks || [lo, (lo + hi) / 2, hi];
+  for (const t of ticks) s += `<line x1="${sx(t)}" x2="${sx(t)}" y1="0" y2="${h - 20}" stroke="var(--line)"/><text x="${sx(t)}" y="${h - 6}" text-anchor="middle">${opts.pct ? Math.round(t * 100) + '%' : t.toFixed(2)}</text>`;
+  rows.forEach((r, i) => {
+    const y0 = i * group + 4;
+    s += `<text class="lbl" x="${left - 10}" y="${y0 + group / 2 - 4}" text-anchor="end">${esc(r.label)}</text>`;
+    keys.forEach((k, j) => { const v = r[k]; if (v == null) return; const y = y0 + j * (bh + gap);
+      s += `<rect x="${left}" y="${y}" width="${Math.max(1, sx(v) - left)}" height="${bh}" rx="2" fill="${colors[j]}"/>`;
+      s += `<text x="${sx(v) + 5}" y="${y + bh - 3}">${opts.pct ? (v * 100).toFixed(1) + '%' : v.toFixed(3)}</text>`; });
+  });
+  return s + '</svg>' + `<div class="keyrow">${keys.map((k, j) => `<span><span class="sw" style="background:${colors[j]}"></span>${names[j]}</span>`).join('')}</div>`;
+}
+function renderHow() {
+  const B = META.backtest, F = META.formula;
+  if (!B) { $('#pane-how').innerHTML = '<p class="lede">Backtest results are not bundled with this build.</p>'; return; }
+  const ros = B.ros, wk = B.weekly;
+  const get = (arr, pos, m, k) => (arr.find(r => r.position === pos && r.model === m) || {})[k];
+  const POS = ['QB', 'RB', 'WR', 'TE'];
+  const rosRows = POS.map(p => ({ label: p, a: get(ros, p, 'm_full', 'rank_corr'), b: get(ros, p, 'b_naive', 'rank_corr') }));
+  const pairRows = POS.map(p => ({ label: p, a: get(ros, p, 'm_full', 'pair_acc'), b: get(ros, p, 'b_naive', 'pair_acc') }))
+    .concat([{ label: 'Cross-position', a: get(ros, 'ALL (1-for-1 trades)', 'm_full', 'pair_acc'), b: get(ros, 'ALL (1-for-1 trades)', 'b_naive', 'pair_acc') }]);
+  const wkRows = POS.map(p => ({ label: p, a: get(wk, p, 'm_full', 'rank_corr'), c: get(wk, p, 'm_lgbm', 'rank_corr'), b: get(wk, p, 'b_naive', 'rank_corr') }));
+  const abl = B.ablation || [];
+  const mult = F ? F.multipliers : null;
+  const pctEff = (b, x) => ((Math.exp(b * x) - 1) * 100);
+  let multTable = '';
+  if (mult) {
+    multTable = `<div class="tablebox"><table><thead><tr><th>Effect on a player's points</th>${POS.map(p => `<th class="n">${p}</th>`).join('')}</tr></thead><tbody>
+      <tr><td>Team implied total +10%</td>${POS.map(p => `<td class="n">${fmt(pctEff(mult[p].ln_itt, Math.log(1.1)))}%</td>`).join('')}</tr>
+      <tr><td>Defense allows 20% more to the position</td>${POS.map(p => `<td class="n">${fmt(pctEff(mult[p].ln_def, Math.log(1.2)))}%</td>`).join('')}</tr>
+      <tr><td>Home vs. away</td>${POS.map(p => `<td class="n">${fmt(pctEff(mult[p].home, 1))}%</td>`).join('')}</tr>
+      <tr><td>Dome or closed roof</td>${POS.map(p => `<td class="n">${fmt(pctEff(mult[p].dome, 1))}%</td>`).join('')}</tr>
+      <tr><td>Favored by 7 (beyond implied total)</td>${POS.map(p => `<td class="n">${fmt(pctEff(mult[p].spread7, 1))}%</td>`).join('')}</tr>
+      </tbody></table></div>`;
+  }
+  const C1 = 'var(--turf-2)', C2 = 'var(--muted)', C3 = 'var(--flag)';
+  $('#pane-how').innerHTML = `
+  <p class="lede">Every number in this tool comes from one formula, fit on NFL data from 2012 on and tested walk-forward on the ${B.seasons} seasons: each season was projected using only the seasons before it, the way you would have used it live.</p>
+  <div class="cols">
+    <div class="panel"><h3>The formula</h3>
+<div class="formula">Game projection = Player rating × Game multiplier
+
+Player rating   = recent form + season average
+                + last season + usage (targets,
+                  carries, target & air-yard share)
+                + red-zone and goal-line touches
+                + age, draft capital, missed games
+
+Game multiplier = (implied team total ÷ avg)^a
+                × (defense factor vs position)^b
+                × home edge × dome edge
+
+ROS value = Σ remaining games
+            P(plays) × rating × multiplier
+Trade value = ROS value − replacement level</div>
+      <p class="note" style="margin-top:10px">Weights are fit separately for QB, RB, WR and TE. The defense factor compares what a defense allowed to each position with what those same players were expected to score, so it adjusts for who they faced.</p>
+    </div>
+    <div class="panel"><h3>What moves a projection</h3>
+      <p class="note">Fitted multipliers, ${META.season} model. Volume and Vegas matter most; schedule and venue are real but smaller.</p>
+      ${multTable}
+    </div>
+  </div>
+  <div class="cols" style="margin-top:16px">
+    <div class="panel"><h3>Rest-of-season rankings</h3>
+      <p class="note">Rank correlation between projected and actual points from the decision week to week 17 (decision weeks 3, 5, 7, 9, 11). Higher is better.</p>
+      ${hbar(rosRows, ['a', 'b'], [C1, C2], ['This formula', 'Season average × games left'], { min: 0, max: 0.8, ticks: [0, .2, .4, .6, .8] })}
+    </div>
+    <div class="panel"><h3>Picking the right side</h3>
+      <p class="note">Share of player pairs where the projection picked the one who actually scored more the rest of the way. Cross-position uses points above replacement and only pairs that ended at least 10 points apart.</p>
+      ${hbar(pairRows, ['a', 'b'], [C1, C2], ['This formula', 'Season average × games left'], { min: .5, max: .8, pct: true, ticks: [.5, .6, .7, .8] })}
+    </div>
+    <div class="panel"><h3>Weekly start/sit</h3>
+      <p class="note">Rank correlation within each position and week. LightGBM is a black-box model on the same inputs, as a ceiling check.</p>
+      ${hbar(wkRows, ['a', 'c', 'b'], [C1, C3, C2], ['This formula', 'LightGBM', 'Season average'], { min: 0, max: 0.6, ticks: [0, .2, .4, .6] })}
+    </div>
+    ${abl.length ? `<div class="panel"><h3>What each ingredient adds</h3>
+      <p class="note">Remove one ingredient, refit all 10 seasons, and see how much the weekly rank correlation (all positions) and the ROS rank correlation drop.</p>
+      <div class="tablebox"><table><thead><tr><th>Removed</th><th class="n">Weekly</th><th class="n">ROS</th></tr></thead><tbody>
+      ${abl.map(a => `<tr><td>${esc(a.label)}</td><td class="n ${a.weekly < -0.001 ? 'bad' : ''}">${a.weekly >= 0 ? '+' : ''}${a.weekly.toFixed(3)}</td><td class="n ${a.ros < -0.001 ? 'bad' : ''}">${a.ros >= 0 ? '+' : ''}${a.ros.toFixed(3)}</td></tr>`).join('')}
+      </tbody></table></div></div>` : ''}
+  </div>
+  ${META.package ? `<div class="panel" style="margin-top:16px"><h3>How multi-player deals are scored</h3>
+    <p>We drafted ${META.package.n_leagues} simulated 12-team leagues from the backtest's week-7 projections (four per season) and made ${META.package.n_trades.toLocaleString()} random trades between them. Regressing each team's change in starting-lineup points on the pieces exchanged gives the weights used here. The best player you receive counts fully, the second ${Math.round(W[1] * 100)}%, the third ${Math.round(W[2] * 100)}%. Players you send away count in full (the fit put them at 100%, 101% and 114%).</p>
+    <p class="note">These generic weights explain ${Math.round(META.package.r2 * 100)}% of how much a trade changes a team's lineup, about the same as a plain sum (${Math.round(META.package.r2_plain_sum * 100)}%). The rest depends on the roster you already have, which is why the roster check on the Trade tab is the better read for your own team.</p></div>` : ''}
+  `;
+}
+
+function refresh() { REP = replacement(); renderTrade(); renderRank(); }
+refresh(); renderHow();
+})();
+</script>
