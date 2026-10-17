@@ -9,7 +9,8 @@ before kickoff and 1 hour before, then reports
      maker at the bid), YES and NO sides;
   2. accuracy of the formula vs Kalshi on the same markets;
   3. betting the formula's disagreements (YES when formula > ask + fee, NO when 1 - formula > NO ask + fee).
-Standard errors are clustered by player-game (the rungs of one player's ladder move together).
+2025 (historical, weeks 4-18, half the games, middle rung of each ladder) is the independent
+test season; 2026 is split into weeks 1-3 and 4-6. Standard errors are clustered by player-game (the rungs of one player's ladder move together).
 Only players who appear in that game's box score are scored ("active" - inactives are announced
 90 minutes before kickoff, and Kalshi's price already reflects them).
 """
@@ -42,26 +43,37 @@ def snap(candles: list[dict], t: int) -> dict:
 def load(props_dir: Path) -> pd.DataFrame:
     rows = []
     for series, stat in SERIES.items():
-        mp, cp = props_dir / f"{series}_markets.json", props_dir / f"{series}_candles.jsonl"
-        if not (mp.exists() and cp.exists()):
-            continue
-        meta = {m["ticker"]: m for m in json.load(mp.open())}
-        for line in cp.open():
-            d = json.loads(line)
-            m = meta.get(d["ticker"])
-            if not m or m.get("floor_strike") is None:
+        for suffix in ("", "_hist"):
+            mp, cp = props_dir / f"{series}{suffix}_markets.json", props_dir / f"{series}{suffix}_candles.jsonl"
+            if not (mp.exists() and cp.exists()):
                 continue
-            row = {"series": series, "stat": stat, "ticker": m["ticker"], "game_id": m["game_id"],
-                   "kickoff": m["kickoff"], "name": m["title"].split(":")[0].strip(),
-                   "strike": float(m["floor_strike"]), "won": m["result"] == "yes",
-                   "volume": float(m.get("volume_fp") or 0)}
-            for label, t in (("0", m["kickoff"]), ("1", m["kickoff"] - 3600)):
-                c = snap(d["candles"], t)
-                row[f"bid_{label}"], row[f"ask_{label}"] = c.get("bid"), c.get("ask")
-            rows.append(row)
+            meta = {m["ticker"]: m for m in json.load(mp.open()) if m.get("floor_strike") is not None}
+            ladders: dict[str, list] = {}
+            for m in meta.values():
+                ladders.setdefault(m["ticker"].rsplit("-", 1)[0], []).append(m)
+            middle = set()
+            for rungs in ladders.values():
+                rungs.sort(key=lambda m: float(m["floor_strike"]))
+                middle.add(rungs[(len(rungs) - 1) // 2]["ticker"])
+            for line in cp.open():
+                d = json.loads(line)
+                m = meta.get(d["ticker"])
+                if not m:
+                    continue
+                row = {"series": series, "stat": stat, "ticker": m["ticker"], "game_id": m["game_id"],
+                       "kickoff": m["kickoff"], "name": m["title"].split(":")[0].strip(),
+                       "strike": float(m["floor_strike"]), "won": m["result"] == "yes",
+                       "volume": float(m.get("volume_fp") or 0), "middle_rung": m["ticker"] in middle}
+                for label, t in (("0", m["kickoff"]), ("1", m["kickoff"] - 3600)):
+                    c = snap(d["candles"], t)
+                    row[f"bid_{label}"], row[f"ask_{label}"] = c.get("bid"), c.get("ask")
+                rows.append(row)
     df = pd.DataFrame(rows)
     df["name_key"] = df["name"].map(norm_name)
     df["pg"] = df["game_id"] + "|" + df["name_key"]
+    week = df["game_id"].str[5:7].astype(int)
+    df["period"] = np.where(df["game_id"].str[:4] == "2025", "2025 wk4-18",
+                            np.where(week <= 3, "2026 wk1-3", "2026 wk4-6"))
     return df
 
 
@@ -150,27 +162,35 @@ def bet_table(d: pd.DataFrame, when: str) -> pd.DataFrame:
 def main(props_dir: str) -> None:
     pd.set_option("display.width", 220)
     d = attach_formula(load(Path(props_dir)))
-    d["season"] = d["game_id"].str[:4]
-    print("markets:", len(d), "| by stat:", d.groupby("stat").size().to_dict(), "| seasons:", d.season.value_counts().to_dict())
+    print("markets:", len(d), "| by stat:", d.groupby("stat").size().to_dict(), "| periods:", d.period.value_counts().to_dict())
     print("player-games:", d.pg.nunique(), "| matched to box score (active):", round(d.active.mean(), 3),
           "| formula available:", round(d.p_formula.notna().mean(), 3))
     a = d[d.active]
     print("settlement agrees with box score:", round(float((a.won == a.won_check).mean()), 4))
+    cur = d[d.period != "2025 wk4-18"]
     for when in ("0", "1"):
-        print(f"\n== Kalshi price buckets, last quote {'at kickoff' if when == '0' else '1h before'} (all markets) ==")
-        print(bucket_table(d, when).round(4).to_string(index=False))
-    for when in ("0", "1"):
-        x = d[d.active & d.p_formula.notna()].dropna(subset=[f"bid_{when}", f"ask_{when}"])
-        x = x[(x[f"ask_{when}"] - x[f"bid_{when}"] <= 0.10) & (x[f"bid_{when}"] > 0)]
-        mid = (x[f"bid_{when}"] + x[f"ask_{when}"]) / 2
-        blend = 1 / (1 + np.exp(-(0.5 * np.log(mid / (1 - mid)) + 0.5 * np.log(x.p_formula / (1 - x.p_formula)))))
-        print(f"\nAccuracy ({when}h before, {len(x)} active-player markets): "
-              f"Kalshi mid {ll(mid, x.won):.4f} | formula {ll(x.p_formula, x.won):.4f} | 50/50 blend {ll(blend, x.won):.4f}")
-        for stat, g in x.groupby("stat"):
-            m = (g[f"bid_{when}"] + g[f"ask_{when}"]) / 2
-            print(f"   {stat:16s} n={len(g):5d}  Kalshi {ll(m, g.won):.4f}  formula {ll(g.p_formula, g.won):.4f}")
-        print(f"\n== Betting the formula's disagreements, {when}h before (taker, fee included) ==")
-        print(bet_table(d, when).round(4).to_string(index=False))
+        print(f"\n== 2026 Kalshi price buckets, last quote {'at kickoff' if when == '0' else '1h before'} (all rungs) ==")
+        print(bucket_table(cur, when).round(4).to_string(index=False))
+    when = "0"
+    for period in sorted(d.period.unique()):
+        for rungs in ("middle rung only", "all rungs"):
+            p = d[d.period == period]
+            if rungs == "middle rung only":
+                p = p[p.middle_rung]
+            elif period.startswith("2025"):
+                continue  # only middle rungs were downloaded for 2025
+            x = p[p.active & p.p_formula.notna()].dropna(subset=[f"bid_{when}", f"ask_{when}"])
+            x = x[(x[f"ask_{when}"] - x[f"bid_{when}"] <= 0.10) & (x[f"bid_{when}"] > 0)]
+            if x.empty:
+                continue
+            mid = (x[f"bid_{when}"] + x[f"ask_{when}"]) / 2
+            print(f"\n######## {period}, {rungs}: {len(x)} active-player markets at kickoff ########")
+            print(f"Accuracy (log loss): Kalshi mid {ll(mid, x.won):.4f} | formula {ll(x.p_formula, x.won):.4f}")
+            for stat, g in x.groupby("stat"):
+                m = (g[f"bid_{when}"] + g[f"ask_{when}"]) / 2
+                print(f"   {stat:16s} n={len(g):5d}  Kalshi {ll(m, g.won):.4f}  formula {ll(g.p_formula, g.won):.4f}")
+            print("Betting the formula's disagreements at kickoff (taker, fee included):")
+            print(bet_table(p, when).round(4).to_string(index=False))
     d.to_csv(OUT / "props_kalshi_joined.csv", index=False)
 
 
