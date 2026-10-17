@@ -6,7 +6,7 @@
 
 ## 1. The short answer
 
-**I did not find a formula that makes money on Kalshi or Polymarket after fees, and I tested a lot of them.** I built my own team-win formula and my own player-yards formula, then tested a dozen trading rules on about 5,000 Kalshi game sides, about 1,100 late-game NHL entries and 19,000 Kalshi player markets, across two seasons wherever the data existed. Every rule that looked profitable in one season either lost in the other season, or was too small to tell apart from luck.
+**I did not find a formula that makes money on Kalshi or Polymarket after fees, and I tested a lot of them.** I built my own team-win formula and my own player-yards formula, then tested a dozen trading rules on about 5,000 Kalshi game sides, about 2,600 late-game NHL and MLB entries and 19,000 Kalshi player markets, across two seasons wherever the data existed. Every rule that looked profitable in one season either lost in the other season, or was too small to tell apart from luck.
 
 Three reasons, all visible in the data:
 
@@ -165,6 +165,17 @@ The resting bid shows why "be the maker" fails for a retail trader. Your bid get
 | 96–98.5¢ | −0.4% ± 2.0% | −1.4% ± 1.6% |
 
 This was the most promising lead from the research. It reversed on the larger season.
+
+**Late-game favorites (MLB),** same rule from 150 minutes after first pitch:
+
+| Band | 2026 season (1,050 entries) | 2025 season, independent test (300 games) |
+|---|---|---|
+| 70–85¢ | −2.2% ± 3.6% | −7.6% ± 6.0% |
+| 85–92¢ | +0.1% ± 2.2% | −0.8% ± 3.9% |
+| 92–96¢ | −0.9% ± 1.6% | +0.9% ± 2.5% |
+| 96–98.5¢ | +0.3% ± 1.0% | +1.9% ± 1.0% |
+
+The top band is slightly positive in both seasons (about +0.7% ± 0.7% pooled), but each bet risks $1 to win 2–3¢. That's break-even, not an edge.
 
 **Sportsbook line vs. Kalshi.** Kalshi's NFL kickoff price sits within 0.6 points of the de-vigged sportsbook close in every price band. Only 58 sides in two seasons were cheap enough on Kalshi to bet against the sportsbook line, too few to be a strategy.
 

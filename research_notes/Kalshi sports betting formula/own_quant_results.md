@@ -103,7 +103,16 @@ Independent test, 2025-26 NHL season (historical endpoint, reproducible random s
 | 85–92¢ | 197 | 87.3¢ | 83.3% | −5.4% (±3.0%) |
 | 92–96¢ | 195 | 93.2¢ | 90.3% | −3.6% (±2.3%) |
 | 96–98.5¢ | 182 | 96.8¢ | 95.6% | −1.4% (±1.6%) |
-The earlier, larger season reverses the sign in every band: late-game NHL leaders were OVERpriced in 2025-26. Pooled over both seasons the rule loses in three of four bands (−1% to −3%). Not a usable edge. MLB current season: 19 games, all favourites won — too small to judge.
+The earlier, larger season reverses the sign in every band: late-game NHL leaders were OVERpriced in 2025-26. Pooled over both seasons the rule loses in three of four bands (−1% to −3%). Not a usable edge.
+
+MLB, same rule from 150 minutes after the estimated start:
+| Band | 2026 bets | ROI (± SE) | 2025 bets (300-game sample) | ROI (± SE) |
+|---|---|---|---|---|
+| 70–85¢ | 221 | −2.2% (±3.6%) | 92 | −7.6% (±6.0%) |
+| 85–92¢ | 252 | +0.1% (±2.2%) | 90 | −0.8% (±3.9%) |
+| 92–96¢ | 274 | −0.9% (±1.6%) | 92 | +0.9% (±2.5%) |
+| 96–98.5¢ | 303 | +0.3% (±1.0%) | 106 | +1.9% (±1.0%) |
+Break-even. The top band is mildly positive in both seasons (~+0.7% ± 0.7% pooled), which is not exploitable at $1 risked per 2–3¢ won.
 
 ## F. NFL formula vs Kalshi over two seasons (2025 historical + 2026 to date; 712-714 matched team sides)
 
