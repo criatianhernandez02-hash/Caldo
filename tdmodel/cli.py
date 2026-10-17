@@ -18,7 +18,8 @@ from . import backtest as bt
 from .data import DEFAULT_CACHE, load_games, load_player_weeks
 from .model import Config, project_week
 from .parlay import DEFAULT_PLAN, default_legs, legs_from_lines, load_lines, weekly_card
-from . import kalshi, sleeper
+from . import betlog, kalshi, sleeper
+from .opportunity import attach_expected, load_expected
 
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", 30)
@@ -94,7 +95,11 @@ def print_card(slips, stake: float) -> None:
         if not np.isnan(s.multiplier):
             ev = s.expected_return - s.stake
             print(f"   Sleeper payout {s.multiplier:.2f}x -> ${s.stake * s.multiplier:.0f} if it hits; "
-                  f"model expected profit {ev:+.2f}")
+                  f"expected profit {ev:+.2f}")
+            if "kalshi_prob" in s.legs and s.legs["kalshi_prob"].notna().all():
+                p_mkt = float(np.prod(s.legs["kalshi_prob"]))
+                print(f"   Market-only view (Kalshi): win {p_mkt:.1%}, expected profit "
+                      f"{s.stake * (p_mkt * s.multiplier - 1):+.2f}  <- the house edge on this slip")
 
 
 def print_value_board(legs: pd.DataFrame, top: int) -> None:
@@ -107,15 +112,19 @@ def print_value_board(legs: pd.DataFrame, top: int) -> None:
     cols = ["player", "pos", "team", "opp", "pick", "multiplier", "breakeven"]
     pct = ["breakeven", "prob"]
     if "kalshi_prob" in v:
-        cols += ["model_prob", "kalshi_prob"]
+        cols += ["kalshi_payout", "model_prob", "kalshi_prob"]
         pct += ["model_prob", "kalshi_prob"]
+        v["kalshi_payout"] = v["kalshi_payout"].round(2)
     t = v[cols + ["prob", "edge"]].copy()
     for c in pct:
         t[c] = t[c].map(_pct)
     t["edge"] = t["edge"].map(lambda e: f"{e:+.0%}")
-    t = t.rename(columns={"model_prob": "model", "kalshi_prob": "kalshi", "prob": "used"})
+    t = t.rename(columns={"model_prob": "model", "kalshi_prob": "kalshi", "prob": "used",
+                          "multiplier": "sleeper_x", "kalshi_payout": "kalshi_x"})
     what = "blend of model + Kalshi" if "kalshi_prob" in v else "model win %"
     print(f"\n=== SLEEPER VALUE BOARD ({what} vs the % Sleeper's payout needs; edge = expected profit per $1) ===")
+    if "kalshi_x" in t:
+        print("kalshi_x = what the same pick pays per $1 if bought on Kalshi right now (at the ask, after fees)")
     print(t.to_string(index=False))
 
 
@@ -134,12 +143,37 @@ def print_disagreements(legs: pd.DataFrame, n: int = 10) -> None:
     print(t.drop(columns="line").rename(columns={"model_prob": "model", "kalshi_prob": "kalshi"}).to_string(index=False))
 
 
+def load_stats(seasons: list[int], current: int, args) -> pd.DataFrame:
+    """Weekly stats plus expected-TD columns (falls back to actual TDs only if unavailable)."""
+    stats = load_player_weeks(seasons, current, args.cache, args.refresh)
+    try:
+        return attach_expected(stats, load_expected(seasons, current, args.cache, args.refresh))
+    except Exception as exc:  # network / file problems should not stop the weekly run
+        print(f"(expected-TD data unavailable: {exc}; using actual TDs only)")
+        return stats
+
+
+def print_promos(promos: pd.DataFrame) -> None:
+    print("\n=== SLEEPER PROMO LINES (boosts / discounted lines - the only +EV picks this research found) ===")
+    if promos.empty:
+        print("None posted for NFL right now. Check the app too: account-specific promos are not in the public feed.")
+        return
+    t = promos.copy()
+    t["ev"] = [("near-certain" if "near-certain" in pr else f">= {e:+.0%}") if floor else f"{e:+.0%}"
+               for e, floor, pr in zip(t["ev_estimate"], t["ev_is_floor"], t["promo"])]
+    t["pick"] = t["prop"].str.replace("_", " ") + " " + t["side"].str.upper() + " " + t["line"].astype(str)
+    t["regular"] = t["regular_line"].astype(str) + " @ " + t["regular_multiplier"].astype(str) + "x"
+    print(t[["player", "team", "pick", "multiplier", "regular", "promo", "ev"]].to_string(index=False))
+    print("ev = expected profit per $1 on that leg alone (from the de-vigged regular line). Promo picks usually "
+          "have small entry limits; check the terms in the app.")
+
+
 def cmd_week(args) -> None:
     if args.probability_play:
         args.allow_negative = args.overs_only = args.overlap = True
     games = load_games(args.cache, args.refresh)
     season, week = (args.season, args.week) if args.season and args.week else next_week(games)
-    stats = load_player_weeks([season - 1, season], season, args.cache, args.refresh)
+    stats = load_stats([season - 1, season], season, args)
     proj, env = project_week(stats, games, season, week, Config(), only_unplayed=not args.include_played)
     if args.exclude:
         out = {n.strip().lower() for n in args.exclude.split(",")}
@@ -157,6 +191,8 @@ def cmd_week(args) -> None:
         print("Dropped (Sleeper injury status): " +
               ", ".join(f"{n} ({s})" for n, s in zip(injured["name"], injured["injury_status"])))
     print_week(proj, env, args.top)
+    if args.sleeper:
+        print_promos(sleeper.fetch_promos(args.cache, args.refresh))
 
     unmatched = []
     if args.sleeper:
@@ -191,6 +227,9 @@ def cmd_week(args) -> None:
     slips = weekly_card(legs, args.stake, plan, overlap=args.overlap, overs_only=args.overs_only,
                         min_edge=None if args.allow_negative else args.min_edge)
     print_card(slips, args.stake)
+    if args.log:
+        n = betlog.append(args.log, slips, season, week)
+        print(f"\nLogged {n} slips to {args.log}. After the games: python -m tdmodel grade --log {args.log}")
 
     if args.out:
         Path(args.out).mkdir(parents=True, exist_ok=True)
@@ -199,9 +238,18 @@ def cmd_week(args) -> None:
         print(f"\nSaved CSVs to {args.out}/")
 
 
+def cmd_grade(args) -> None:
+    log = betlog.read(args.log)
+    seasons = sorted(log["season"].unique())
+    stats = load_player_weeks(seasons, max(seasons), args.cache, args.refresh)
+    graded = betlog.grade(log, stats)
+    betlog.write(args.log, graded)
+    print(betlog.summary(graded))
+
+
 def cmd_backtest(args) -> None:
     games = load_games(args.cache, args.refresh)
-    stats = load_player_weeks([args.season - 1, args.season], args.season, args.cache, args.refresh)
+    stats = load_stats([args.season - 1, args.season], args.season, args)
     lo, hi = (int(x) for x in args.weeks.split("-"))
     r = bt.run(stats, games, args.season, list(range(lo, hi + 1)))
     print(f"Backtest {args.season} weeks {lo}-{hi} (lower Brier = better)\n")
@@ -235,10 +283,13 @@ def main(argv=None) -> None:
     w.add_argument("--season", type=int)
     w.add_argument("--week", type=int)
     w.add_argument("--sleeper", action="store_true",
-                   help="pull live Sleeper Picks lines + payouts and drop injured players")
+                   help="pull live Sleeper Picks lines, promos + payouts and drop injured players. NOTE: "
+                        "Sleeper's Terms of Service (Oct 2026, sec. 11) prohibit automated data access; "
+                        "use at your own risk, or type lines in with --lines instead")
     w.add_argument("--kalshi", action="store_true",
                    help="blend in Kalshi prediction-market prices as a second opinion")
-    w.add_argument("--kalshi-weight", type=float, default=0.5, help="weight on Kalshi in the blend (0-1)")
+    w.add_argument("--kalshi-weight", type=float, default=0.75,
+                   help="weight on Kalshi in the blend (0-1); backtests found the market at least as accurate as the model")
     w.add_argument("--lines", help="CSV of Sleeper lines: player,market,line,side[,multiplier]")
     w.add_argument("--min-edge", type=float, default=0.0,
                    help="with payouts known, only use legs with at least this edge (0.05 = +5%%)")
@@ -253,7 +304,12 @@ def main(argv=None) -> None:
     w.add_argument("--include-played", action="store_true", help="keep games already played")
     w.add_argument("--top", type=int, default=20)
     w.add_argument("--out", help="directory to save projection CSVs")
+    w.add_argument("--log", help="append this week's slips to a CSV bet log (grade later with `grade`)")
     w.set_defaults(func=cmd_week)
+
+    g = sub.add_parser("grade", help="grade a bet log against final box scores and show your real P&L")
+    g.add_argument("--log", required=True, help="CSV bet log written by `week --log`")
+    g.set_defaults(func=cmd_grade)
 
     b = sub.add_parser("backtest", help="walk-forward backtest of a past season")
     b.add_argument("--season", type=int, default=2025)

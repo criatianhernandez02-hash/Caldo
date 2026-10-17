@@ -63,11 +63,26 @@ def fetch_prices() -> pd.DataFrame:
     return prices
 
 
+def taker_fee(price: np.ndarray | float) -> np.ndarray | float:
+    """Kalshi taker fee per $1 contract: 7% x P x (1-P), rounded up to the next cent."""
+    price = np.asarray(price, dtype=float)
+    return np.ceil(np.round(0.07 * price * (1 - price) * 100, 6)) / 100
+
+
 def attach(legs: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-    """Add the Kalshi probability for each leg's side ("less" = 1 - yes price)."""
+    """Add, for each leg's side ("less" = the No contract):
+    kalshi_prob    the market's probability (bid/ask midpoint)
+    kalshi_payout  what $1 returns if it wins when bought on Kalshi now at the ask, after the
+                   taker fee - directly comparable to Sleeper's multiplier for the same pick.
+    """
     legs = legs.copy()
     key = legs["player"].str.replace(r" \(Q\)$", "", regex=True).map(norm_name)
-    lookup = prices.drop_duplicates(["key", "market", "line"]).set_index(["key", "market", "line"])["kalshi_prob"]
-    p_yes = [lookup.get((k, m, l), np.nan) for k, m, l in zip(key, legs["market"], legs["line"])]
-    legs["kalshi_prob"] = np.where(legs["side"] == "more", p_yes, 1 - np.asarray(p_yes, dtype=float))
+    book = prices.drop_duplicates(["key", "market", "line"]).set_index(["key", "market", "line"])
+    idx = list(zip(key, legs["market"], legs["line"]))
+    get = lambda col: np.array([book[col].get(i, np.nan) for i in idx], dtype=float)  # noqa: E731
+    p_yes, bid, ask = get("kalshi_prob"), get("kalshi_bid"), get("kalshi_ask")
+    more = (legs["side"] == "more").to_numpy()
+    legs["kalshi_prob"] = np.where(more, p_yes, 1 - p_yes)
+    cost = np.where(more, ask, 1 - bid)  # buying No costs 1 - (best Yes bid)
+    legs["kalshi_payout"] = 1 / (cost + taker_fee(cost))
     return legs

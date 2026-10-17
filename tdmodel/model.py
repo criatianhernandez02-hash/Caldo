@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
+X_COLS = ["x_rush_td", "x_rec_td", "x_pass_td"]
 CATEGORIES = [f"{kind}_{pos}" for pos in POSITIONS for kind in ("rush", "rec")]
 
 
@@ -41,6 +42,11 @@ class Config:
     defense_prior_games: float = 32.0  # shrink defensive splits toward league average
     offense_prior_games: float = 8.0   # shrink team rush/pass split toward league average
     td_share_prior: float = 20.0       # pseudo team-TDs anchoring a player's TD share to his usage
+    # Weight on *expected* TDs (ffopportunity xTD, see opportunity.py) vs actual TDs when
+    # estimating a player's share of team TDs and the team's rush/pass split. 0 = actual only.
+    # Only used when the stats table carries x_rush_td / x_rec_td columns.
+    # 0.5 tested best overall in walk-forward 2024-26 comparisons (research/compare_models.py).
+    td_signal: float = 0.5
     matchup_clip: tuple[float, float] = (0.6, 1.6)
     # 0 = ignore defensive splits, 1 = full effect. Backtests (2024 tune, 2025 holdout) show the
     # Vegas total already prices most of the matchup, so it is kept as a light tie-breaker.
@@ -106,9 +112,9 @@ def history_window(stats: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
 def team_games(hist: pd.DataFrame, games: pd.DataFrame, season: int, cfg: Config) -> pd.DataFrame:
     """One row per (game, offense) with usage totals and TDs by position category."""
     keys = ["game_id", "season", "week", "team", "opponent_team"]
-    tg = hist.groupby(keys, as_index=False)[
-        ["attempts", "carries", "targets", "rushing_tds", "receiving_tds", "passing_tds"]
-    ].sum()
+    sum_cols = ["attempts", "carries", "targets", "rushing_tds", "receiving_tds", "passing_tds"]
+    sum_cols += [c for c in X_COLS if c in hist.columns]
+    tg = hist.groupby(keys, as_index=False)[sum_cols].sum()
 
     by_pos = hist.groupby(["game_id", "team", "position_group"])[["rushing_tds", "receiving_tds"]].sum()
     by_pos = by_pos.unstack("position_group", fill_value=0.0)
@@ -158,6 +164,10 @@ def offense_profile(tg: pd.DataFrame, lg: dict, cfg: Config) -> pd.DataFrame:
     k = cfg.offense_prior_games
     prof = pd.DataFrame(index=t.index)
     prof["rush_frac"] = (t["rushing_tds"] + k * lg["rush_td"]) / (t["off_td"] + k * lg["off_td"])
+    if cfg.td_signal > 0 and "x_rush_td" in tg.columns:
+        x = _wsum(tg.assign(x_off=tg["x_rush_td"] + tg["x_rec_td"]), "team", ["x_rush_td", "x_off"], "w_off")
+        x_frac = (x["x_rush_td"] + k * lg["rush_td"]) / (x["x_off"] + k * lg["off_td"])
+        prof["rush_frac"] = (1 - cfg.td_signal) * prof["rush_frac"] + cfg.td_signal * x_frac
     prof["pts_for_pg"] = s["points_for"] / s["_w"]
     prof["pts_against_pg"] = s["points_against"] / s["_w"]
     return prof
@@ -191,6 +201,7 @@ def defense_profile(tg: pd.DataFrame, lg: dict, cfg: Config) -> pd.DataFrame:
 
 def player_profile(hist: pd.DataFrame, tg: pd.DataFrame, season: int, cfg: Config) -> pd.DataFrame:
     team_cols = ["attempts", "carries", "targets", "rushing_tds", "receiving_tds", "passing_tds"]
+    team_cols += [c for c in X_COLS if c in tg.columns]
     p = hist.merge(
         tg[["game_id", "team", "gkey"] + team_cols].rename(columns={c: f"team_{c}" for c in team_cols}),
         on=["game_id", "team"], how="left",
@@ -219,6 +230,17 @@ def player_profile(hist: pd.DataFrame, tg: pd.DataFrame, season: int, cfg: Confi
     prof["rush_td_share"] = (wsum("rushing_tds", "w") + k * prof["carry_share"]) / (wsum("team_rushing_tds", "w") + k)
     prof["rec_td_share"] = (wsum("receiving_tds", "w") + k * prof["target_share"]) / (wsum("team_receiving_tds", "w") + k)
     prof["pass_td_share"] = (wsum("passing_tds", "w") + k * prof["att_share"]) / (wsum("team_passing_tds", "w") + k)
+    w = p.groupby("player_id")["w"].sum()
+    prof["td_pg"] = wsum("rushing_tds", "w").add(wsum("receiving_tds", "w")) / w
+    if "x_rush_td" in p.columns:
+        prof["xtd_pg"] = wsum("x_rush_td", "w").add(wsum("x_rec_td", "w")) / w
+        x_rush = (wsum("x_rush_td", "w") + k * prof["carry_share"]) / (wsum("team_x_rush_td", "w") + k)
+        x_rec = (wsum("x_rec_td", "w") + k * prof["target_share"]) / (wsum("team_x_rec_td", "w") + k)
+        prof["x_rush_td_share"], prof["x_rec_td_share"] = x_rush, x_rec
+        a = cfg.td_signal
+        if a > 0:
+            prof["rush_td_share"] = (1 - a) * prof["rush_td_share"] + a * x_rush
+            prof["rec_td_share"] = (1 - a) * prof["rec_td_share"] + a * x_rec
 
     last = p.sort_values("gkey").groupby("player_id").tail(1).set_index("player_id")
     prof["name"] = last["player_display_name"]

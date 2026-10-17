@@ -178,3 +178,64 @@ def test_kalshi_parse_and_attach():
     assert out["kalshi_prob"].iloc[0] == pytest.approx(0.32)
     assert out["kalshi_prob"].iloc[1] == pytest.approx(0.68)
     assert np.isnan(out["kalshi_prob"].iloc[2])
+
+
+def test_kalshi_taker_fee_and_payout():
+    from tdmodel.kalshi import attach, taker_fee
+    assert taker_fee(0.60) == pytest.approx(0.02)   # 0.07*0.6*0.4 = 1.68c -> rounds up to 2c
+    assert taker_fee(0.10) == pytest.approx(0.01)   # 0.63c -> 1c
+    prices = pd.DataFrame([{"player": "A", "market": "anytime_td", "line": 0.5, "kalshi_bid": 0.58,
+                            "kalshi_ask": 0.60, "kalshi_prob": 0.59, "key": "a"}])
+    legs = pd.DataFrame([{"player": "A", "market": "anytime_td", "line": 0.5, "side": "more"},
+                         {"player": "A", "market": "anytime_td", "line": 0.5, "side": "less"}])
+    out = attach(legs, prices)
+    assert out["kalshi_payout"].iloc[0] == pytest.approx(1 / 0.62)
+    assert out["kalshi_payout"].iloc[1] == pytest.approx(1 / (0.42 + 0.02))  # No costs 1 - 58c bid; fee 1.7c -> 2c
+
+
+def test_betlog_grades_wins_losses_and_voids(tmp_path):
+    from tdmodel import betlog
+    from tdmodel.parlay import Slip
+    legs = pd.DataFrame([
+        {"player": "Run Back", "pos": "RB", "team": "AAA", "opp": "BBB", "market": "anytime_td", "line": 0.5,
+         "side": "more", "prob": 0.6, "multiplier": 1.5},
+        {"player": "Pass Man", "pos": "QB", "team": "BBB", "opp": "AAA", "market": "pass_tds", "line": 1.5,
+         "side": "less", "prob": 0.5, "multiplier": 2.0},
+        {"player": "Sat Out", "pos": "WR", "team": "AAA", "opp": "BBB", "market": "anytime_td", "line": 0.5,
+         "side": "more", "prob": 0.4, "multiplier": 2.5},
+    ])
+    path = str(tmp_path / "log.csv")
+    assert betlog.append(path, [Slip("Anchor (3-leg)", legs, 20.0)], 2026, 3) == 1
+    stats = pd.DataFrame([
+        {"season": 2026, "week": 3, "player_display_name": "Run Back", "team": "AAA",
+         "passing_tds": 0, "rushing_tds": 1, "receiving_tds": 0},
+        {"season": 2026, "week": 3, "player_display_name": "Pass Man", "team": "BBB",
+         "passing_tds": 1, "rushing_tds": 0, "receiving_tds": 0},
+    ])
+    graded = betlog.grade(betlog.read(path), stats)
+    assert list(graded["leg_result"]) == ["win", "win", "void"]
+    assert graded["slip_result"].iloc[0] == "win"
+    assert graded["payout"].iloc[0] == pytest.approx(20 * 1.5 * 2.0)  # void leg dropped from payout
+    stats.loc[0, "rushing_tds"] = 0
+    assert betlog.grade(betlog.read(path), stats)["slip_result"].iloc[0] == "loss"
+
+
+def test_parse_sleeper_promos():
+    from tdmodel.sleeper import parse_promos
+
+    def mkt(line_type, over, under, ov_mult, un_mult, sid="1", wager="receptions"):
+        o = lambda side, v, m: {"outcome": side, "outcome_value": v, "payout_multiplier": m, "status": "active",  # noqa: E731
+                                "metadata": {"promotion_type": "over_boost"} if line_type != "normal" else {}}
+        return {"sport": "nfl", "status": "active", "subject_id": sid, "wager_type": wager, "line_type": line_type,
+                "options": [o("over", over, ov_mult), o("under", under, un_mult)]}
+
+    raw = [mkt("normal", 6.5, 6.5, "2.03", "1.58"), mkt("line_promotion", 6.5, 6.5, "2.20", "1.60"),
+           mkt("normal", 227.5, 227.5, "1.78", "1.78", sid="2", wager="passing_yards"),
+           mkt("line_promotion", 0.5, 0.5, "1.78", "1.78", sid="2", wager="passing_yards")]
+    p = parse_promos(raw, {"1": {"full_name": "Drake London"}, "2": {"full_name": "Trevor Lawrence"}})
+    boost = p[(p["player"] == "Drake London") & (p["side"] == "more")].iloc[0]
+    fair = (1 / 2.03) / (1 / 2.03 + 1 / 1.58)
+    assert boost["ev_estimate"] == pytest.approx(fair * 2.20 - 1)
+    disc = p[p["player"] == "Trevor Lawrence"]
+    assert list(disc["side"]) == ["more"]  # under 0.5 yards is not offered as the promo side
+    assert "near-certain" in disc.iloc[0]["promo"] and disc.iloc[0]["ev_is_floor"]

@@ -11,6 +11,7 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -79,3 +80,62 @@ def injury_report(cache_dir: Path = DEFAULT_CACHE, refresh: bool = False) -> pd.
     rows = [{"player_id": p.get("gsis_id"), "injury_status": p.get("injury_status")}
             for p in players.values() if p.get("gsis_id") and p.get("injury_status")]
     return pd.DataFrame(rows, columns=["player_id", "injury_status"])
+
+
+PROMOS_URL = "https://api.sleeper.app/lines/promos"
+
+
+def parse_promos(raw: list[dict], players: dict, sport: str = "nfl") -> pd.DataFrame:
+    """Promo lines next to the regular line for the same prop, with an expected-value estimate.
+
+    Same line, boosted multiplier: EV = fair P(side) from the de-vigged regular line x promo
+    multiplier - 1 (exact up to the regular line's own error).
+    Discounted line (e.g. passing yards More 0.5 instead of 227.5): the promo side is at least as
+    likely as at the regular line, so EV >= fair P(regular) x promo multiplier - 1; huge discounts
+    are near-certain and worth far more than that floor.
+    """
+    regular, promos = {}, []
+    for mkt in raw:
+        if mkt.get("sport") != sport or mkt.get("status") != "active":
+            continue
+        opts = {o["outcome"]: o for o in mkt.get("options", []) if o.get("status") == "active"}
+        if "over" not in opts or "under" not in opts:
+            continue
+        key = (str(mkt.get("subject_id")), mkt.get("wager_type"))
+        if mkt.get("line_type") == "normal":
+            regular[key] = opts
+        else:
+            promos.append((key, mkt.get("line_type"), opts))
+    rows = []
+    for key, line_type, opts in promos:
+        reg = regular.get(key)
+        info = players.get(key[0], {})
+        for side, other in (("over", "under"), ("under", "over")):
+            o = opts[side]
+            row = {"player": info.get("full_name") or key[0], "team": info.get("team"), "prop": key[1],
+                   "side": SIDE[side], "line": float(o["outcome_value"]), "multiplier": float(o["payout_multiplier"]),
+                   "promo": (o.get("metadata") or {}).get("promotion_type") or line_type,
+                   "free_pick": bool((o.get("metadata") or {}).get("display_as_free_pick")),
+                   "regular_line": np.nan, "regular_multiplier": np.nan, "ev_estimate": np.nan, "ev_is_floor": False}
+            if reg:
+                r_line = float(reg[side]["outcome_value"])
+                imp = 1 / float(reg[side]["payout_multiplier"])
+                fair = imp / (imp + 1 / float(reg[other]["payout_multiplier"]))
+                easier = row["line"] < r_line if side == "over" else row["line"] > r_line
+                row.update(regular_line=r_line, regular_multiplier=float(reg[side]["payout_multiplier"]))
+                if row["line"] == r_line:
+                    row["ev_estimate"] = fair * row["multiplier"] - 1
+                elif easier:
+                    row["ev_estimate"], row["ev_is_floor"] = fair * row["multiplier"] - 1, True
+                    if side == "over" and row["line"] <= 0.1 * r_line:
+                        row["promo"] = "line_discount (near-certain)"
+                else:
+                    continue  # the side made harder by a line discount is never the promo
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def fetch_promos(cache_dir: Path = DEFAULT_CACHE, refresh: bool = False) -> pd.DataFrame:
+    resp = requests.get(PROMOS_URL, headers=HEADERS, timeout=60)
+    resp.raise_for_status()
+    return parse_promos(resp.json(), load_players(cache_dir, refresh))
