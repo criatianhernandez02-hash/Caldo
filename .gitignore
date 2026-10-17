@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 output/backtest/**/*_detail_*.parquet
 site/
+output/trade_test/scored.parquet
