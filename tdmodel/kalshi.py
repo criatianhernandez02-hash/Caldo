@@ -63,10 +63,17 @@ def fetch_prices() -> pd.DataFrame:
     return prices
 
 
-def taker_fee(price: np.ndarray | float) -> np.ndarray | float:
-    """Kalshi taker fee per $1 contract: 7% x P x (1-P), rounded up to the next cent."""
+def taker_fee(price: np.ndarray | float, contracts: int | None = None) -> np.ndarray | float:
+    """Kalshi taker fee: 7% x C x P x (1-P), rounded up to the next cent per order.
+
+    With `contracts` the exact order fee is returned; without it, the fee per contract before
+    rounding (the right number for comparing prices on a typical $20 order, where the
+    one-cent rounding is negligible).
+    """
     price = np.asarray(price, dtype=float)
-    return np.ceil(np.round(0.07 * price * (1 - price) * 100, 6)) / 100
+    if contracts is None:
+        return 0.07 * price * (1 - price)
+    return np.ceil(np.round(0.07 * contracts * price * (1 - price) * 100, 6)) / 100
 
 
 def attach(legs: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:

@@ -10,6 +10,7 @@ Reproduces the numbers in `reports/Sleeper Picks profitability deep dive.md`. Ou
 | 3 | `python research/fetch_kalshi.py <dir>` | Downloads Kalshi's settled NFL TD / passing-TD markets and hourly price history (public API, ~10 min). |
 | 4 | `python research/kalshi_history.py <dir>` | Pre-kickoff Kalshi price for every settled market. |
 | 5 | `python research/market_test.py <snapshot.csv>` | Model vs market accuracy, Sleeper's pricing rule fitted from a same-day Sleeper+Kalshi snapshot, and a replay of betting strategies. |
+| 6 | `python research/venue_compare.py [out.csv]` | Live side-by-side: what the same TD pick pays on Sleeper, Kalshi and Polymarket after fees, and each venue's expected value against the exchange midpoint. |
 
 The snapshot CSV for step 5 needs columns `player, market, line, m_over, m_under, kalshi_prob`
 (Sleeper multipliers and the Kalshi midpoint for the same props, taken at the same time).

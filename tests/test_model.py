@@ -182,15 +182,16 @@ def test_kalshi_parse_and_attach():
 
 def test_kalshi_taker_fee_and_payout():
     from tdmodel.kalshi import attach, taker_fee
-    assert taker_fee(0.60) == pytest.approx(0.02)   # 0.07*0.6*0.4 = 1.68c -> rounds up to 2c
-    assert taker_fee(0.10) == pytest.approx(0.01)   # 0.63c -> 1c
+    assert taker_fee(0.60, contracts=1) == pytest.approx(0.02)   # 1.68c rounds up to 2c on a 1-lot
+    assert taker_fee(0.60, contracts=33) == pytest.approx(0.56)  # $20 order: 55.4c -> 56c
+    assert taker_fee(0.60) == pytest.approx(0.0168)              # per contract, before rounding
     prices = pd.DataFrame([{"player": "A", "market": "anytime_td", "line": 0.5, "kalshi_bid": 0.58,
                             "kalshi_ask": 0.60, "kalshi_prob": 0.59, "key": "a"}])
     legs = pd.DataFrame([{"player": "A", "market": "anytime_td", "line": 0.5, "side": "more"},
                          {"player": "A", "market": "anytime_td", "line": 0.5, "side": "less"}])
     out = attach(legs, prices)
-    assert out["kalshi_payout"].iloc[0] == pytest.approx(1 / 0.62)
-    assert out["kalshi_payout"].iloc[1] == pytest.approx(1 / (0.42 + 0.02))  # No costs 1 - 58c bid; fee 1.7c -> 2c
+    assert out["kalshi_payout"].iloc[0] == pytest.approx(1 / (0.60 + 0.07 * 0.60 * 0.40))
+    assert out["kalshi_payout"].iloc[1] == pytest.approx(1 / (0.42 + 0.07 * 0.42 * 0.58))  # No costs 1 - 58c bid
 
 
 def test_betlog_grades_wins_losses_and_voids(tmp_path):
