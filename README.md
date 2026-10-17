@@ -24,6 +24,21 @@ Reproduce it with the scripts in [`research/`](research/README.md).
 * **The 3/5/8 probability-play plan** is expected to lose about $25 a week ($427 over a 17-week
   season) and finishes a season ahead only about 10% of the time.
 
+## Kalshi / Polymarket formula study (October 2026)
+
+Full report: [`reports/Kalshi sports betting formula.md`](reports/Kalshi%20sports%20betting%20formula.md).
+It covers my own team-win and player-yards formulas, plus backtests on real Kalshi and Polymarket
+prices with fees.
+
+* **No formula or rule beat Kalshi after fees.** Kalshi, Polymarket and the sportsbook close are
+  equally accurate on NFL games; the formulas trail them. Every pre-game, resting-bid and late-game
+  rule that looked good in one season lost in the other.
+* **The cheapest bets:** NO on long-shot player rungs (about −1.5%) and game sides at 90¢ or more
+  (about −0.6%). Contracts under 20¢ and parlays/combos lose the most.
+* **One unproven lead:** NO on a player's middle rung when the formula says he goes under.
+  It returned +5.0% ± 2.7% over 1,111 bets, positive in 2025 and in both halves of 2026.
+  Paper-trade it with `python research/props_scan.py`.
+
 ## Weekly routine
 
 ```bash
