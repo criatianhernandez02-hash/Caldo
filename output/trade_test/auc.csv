@@ -1,0 +1,6 @@
+score,AUC
+App odds (both sides),0.7395253924113784
+Lineup only (worse-off side),0.7356656719727275
+Box-score fairness,0.6411853918570597
+Projected-value fairness,0.6446614055672064
+Both lineups combined,0.6853027891464416

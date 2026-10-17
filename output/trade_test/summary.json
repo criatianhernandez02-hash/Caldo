@@ -1,0 +1,40 @@
+{
+  "n_real": 1645,
+  "n_random": 41125,
+  "n_leagues": 434,
+  "seasons": [
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "trade_coefs": {
+    "lineup_worse": 0.0312,
+    "lineup_better": 0.0178,
+    "box_fair_worse": -0.0001,
+    "abs_box": -0.0055,
+    "abs_value": -0.0045
+  },
+  "side_coefs": {
+    "lineup": 0.0116,
+    "box_fair": -0.0065
+  },
+  "side_intercept": 0.054,
+  "side_auc_app": 0.5569672545523415,
+  "side_auc_refit_cv": 0.5873536305335572,
+  "model_right_when_box_disagrees": 0.5539358600583091,
+  "n_box_disagree": 343,
+  "conditional_coefs": {
+    "lineup_worse": 0.0303,
+    "lineup_better": 0.0166,
+    "box_fair_worse": -0.0007,
+    "abs_box": -0.0084,
+    "abs_value": -0.0064
+  },
+  "random_utility_quantiles": {
+    "0.5": -1.2627,
+    "0.75": -0.5492,
+    "0.9": -0.1841
+  },
+  "real_utility_pct_above_random_median": 0.8462006079027355
+}

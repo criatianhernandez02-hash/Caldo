@@ -68,6 +68,38 @@ Sleeper's projections are also an availability signal. When Sleeper projected an
 
 **Agreement with the experts now:** the rest-of-season rank correlation with the FantasyPros consensus rose from 0.77–0.91 to 0.89–0.93 by position. That's about the same agreement ESPN has with FantasyPros (0.78–0.95). A.J. Brown went from WR63 to WR23, matching the consensus.
 
+## Trade odds, tested on real trades
+
+The odds of a yes started as a guess. They're now fit on **1,645 completed player-for-player trades from 434 public Sleeper redraft leagues (2022–2025)**, collected with `scripts/collect_trades.py`.
+
+For each trade, `scripts/test_trades.py`:
+1. Rebuilds both rosters at that moment, from the draft plus every earlier move.
+2. Values every player with the walk-forward backtest snapshot taken before the trade.
+3. Compares the trade with 25 random trades the same two teams could have made that week, with the same number of players.
+
+Sleeper only exposes accepted trades, so the test asks: **does a deal look like the trades real managers accept?**
+
+| Average rank of the real trade among its random alternatives | |
+|---|---|
+| Original odds (lineup change + "looks like a win for them by box score") | 76.1% |
+| Lineup change only | 75.4% |
+| Box-score fairness only | 64.3% |
+| Projected-value fairness only | 65.1% |
+| **New odds, refit on real trades (each season scored by a model fit on the other three)** | **77.5%** |
+
+**What real trades look like:**
+* **Lineup change matters most.** The side that gives up more loses about 12 projected lineup points at the median, vs. 38 in random trades.
+* **Values stay close.** The median box-score gap is 21 points (37 in random trades), and the median projected-value gap is 17 (29).
+* **"Looks like a win for them by box score" doesn't make a trade more likely.** The original formula assumed it did, so that term was dropped.
+* Only 9% of real trades help both projected lineups.
+
+**App labels are anchored on real trades:**
+* **Likely yes:** at least as good as the median accepted trade (above 81% of random alternatives).
+* **Worth a try:** within the range of 80% of accepted trades.
+* **Long shot:** below that.
+
+**Who won:** on 1,410 real trades where one lineup ended at least 10 points better, the model's projected lineup winner was right **56.4%** of the time; points per game so far was right 49.0%. When the two disagreed, the model was right 55% of the time. The edge is modest because most real trades are close calls.
+
 ## The formula
 
 ```
@@ -160,6 +192,8 @@ python scripts/fetch_external.py             # Sleeper weekly projections 2018-n
 python scripts/quick_backtest.py --tag v4    # walk-forward backtest of the current model (~25 min)
 python scripts/fit_blend.py --tag v4         # head-to-head vs Sleeper, blind spots, blend weights
 python scripts/compare_models.py             # live agreement with Sleeper, ESPN, FantasyPros
+python scripts/collect_trades.py             # real trades from public Sleeper redraft leagues (~40 min)
+python scripts/test_trades.py                # test + refit the trade odds -> output/trade_odds.json
 python scripts/build_web.py                  # bundle web/index.html
 ```
 
@@ -191,3 +225,4 @@ Data comes from [nflverse](https://github.com/nflverse): weekly player stats, pl
 * Redraft only: no K/DST projections and no dynasty or keeper age curves. K, DEF and IDP slots in Sleeper leagues are ignored.
 * Passing TDs are projected at 4 points. Leagues with 6-point passing TDs undervalue QBs a little (the app says so).
 * The trade finder doesn't model the free agent a team could add with a roster spot freed by a 2-for-1.
+* The trade odds are fit on trades that happened. Sleeper doesn't expose rejected offers, so they measure how much an offer looks like an accepted trade, not an exact chance of a yes. Low-stakes bench swaps look like typical trades and can score "Likely yes" even when neither side has much reason to bother.

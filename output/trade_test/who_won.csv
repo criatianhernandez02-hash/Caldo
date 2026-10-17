@@ -1,0 +1,4 @@
+predictor,accuracy,n_trades
+Model: projected lineup change,0.5638297872340425,1410
+Model: projected value over replacement,0.5375886524822695,1410
+Box score: points per game so far,0.4900709219858156,1410

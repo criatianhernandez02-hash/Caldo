@@ -96,6 +96,24 @@ def main():
     mult = f[f.part == "multiplier"].pivot(index="position", columns="term", values="coef")
     data["meta"]["formula"] = {"multipliers": json.loads(mult.round(4).to_json(orient="index"))}
     data["meta"]["compare"] = compare_summary()
+    to = OUT_DIR / "trade_odds.json"
+    if to.exists():
+        data["meta"]["trade_odds"] = json.loads(to.read_text())
+    tt = OUT_DIR / "trade_test"
+
+    def read(name, **kw):
+        try:
+            return json.loads(pd.read_csv(tt / name, **kw).round(4).reset_index(drop="index_col" not in kw).to_json(orient="records"))
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            return []
+    if (tt / "summary.json").exists():
+        data["meta"]["trade_test"] = {
+            "summary": json.loads((tt / "summary.json").read_text()),
+            "within": read("within_trade.csv"),
+            "refit": read("within_trade_refit.csv"),
+            "won": read("who_won.csv"),
+            "real_vs_random": read("real_vs_random.csv", index_col=0),
+        }
     pw = OUT_DIR / "package_weights.json"
     if pw.exists():
         data["meta"]["package"] = json.loads(pw.read_text())
