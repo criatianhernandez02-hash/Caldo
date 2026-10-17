@@ -2,6 +2,8 @@
 import numpy as np
 import pandas as pd
 
+from .model import TRANSIENT
+
 
 def team_itt_model(tg, season, week, alpha=4.0, prev_weight=0.35, hl_weeks=6.0):
     """Market-implied team strength from past Vegas lines.
@@ -57,7 +59,14 @@ def project_ros(proj, feat, tg, season, week, last_week=17, live=False):
     snap = fut[fut.k == 0].set_index("player_id")
     rating = proj.rating(snap).rename("rating")
     td_rating = proj.rating(snap, "td").rename("td_rating")
+    # next-game-only flags (questionable, first game back) don't carry into later weeks
+    later = snap.copy()
+    later[TRANSIENT] = 0.0
+    rating_later, td_later = proj.rating(later), proj.rating(later, "td")
     fut = fut.join(rating, on="player_id").join(td_rating, on="player_id")
+    first = fut.k == 0
+    fut["rating"] = np.where(first, fut.rating, fut.player_id.map(rating_later))
+    fut["td_rating"] = np.where(first, fut.td_rating, fut.player_id.map(td_later))
 
     # context known today: posted line for the upcoming week, market ratings beyond
     itt_hat = team_itt_model(tg, season, week)
@@ -93,10 +102,8 @@ def project_ros(proj, feat, tg, season, week, last_week=17, live=False):
         fut.loc[m, "td_mult"] = proj.multiplier(C[m], proj.td_context[pos])
         sched = {"intercept": 0.0, **{t: coef.get(t, 0.0) for t in ("ln_def", "home", "dome")}}
         fut.loc[m, "sched_mult"] = proj.multiplier(C[m][[c for c in sched if c != "intercept"]], sched)
-        sn = snap.loc[fut.player_id[m]]
-        fut.loc[m, "p_play"] = proj.availability(pos, sn.miss_streak.values, sn.miss_rate8.values,
-                                                 sn.played_last.values, fut.rating[m].values,
-                                                 sn.u_attempts.fillna(0).values, fut.k[m].values)
+        sn = snap.loc[fut.player_id[m]].assign(rating=fut.player_id[m].map(rating).values)
+        fut.loc[m, "p_play"] = proj.availability(pos, sn, fut.k[m].values)
 
     fut["xpts"] = fut.p_play * fut.rating * fut.mult
     fut["xtd"] = fut.p_play * fut.td_rating * fut.td_mult
@@ -108,7 +115,7 @@ def project_ros(proj, feat, tg, season, week, last_week=17, live=False):
         sched_ease=("sched_mult", "mean"), actual_ros=("pts", "sum"),
         actual_games=("played", "sum"),
         next_opp=("opp", "first"), next_proj=("proj_if_plays", "first"))
-    out["rating"] = rating
+    out["rating"] = rating_later
     out["ros_ppg"] = out.ros_pts / out.exp_games.clip(lower=0.5)
     out["szn_pts"] = snap.szn_pts
     out["szn_g"] = snap.szn_g
@@ -116,5 +123,5 @@ def project_ros(proj, feat, tg, season, week, last_week=17, live=False):
     out["miss_streak"] = snap.miss_streak
     out["season"], out["week"] = season, week
     # weekly detail for lineup math in the trade calculator
-    weekly = fut[["player_id", "week", "opp", "home", "xpts", "proj_if_plays", "p_play"]]
+    weekly = fut[["player_id", "position", "week", "k", "opp", "home", "xpts", "proj_if_plays", "p_play", "xtd"]]
     return out.reset_index(), weekly

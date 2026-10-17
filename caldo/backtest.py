@@ -21,6 +21,8 @@ VARIANTS = {
     "no_home_dome": {"terms": [t for t in CONTEXT_TERMS if t not in ("home", "dome")]},
     "no_context": {"terms": []},
     "no_usage": {"use_usage": False},
+    "no_status": {"use_status": False},
+    "no_role": {"use_role": False},
 }
 
 

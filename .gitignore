@@ -1,5 +1,5 @@
 data/
 __pycache__/
 *.pyc
-output/backtest/*_detail_*.parquet
+output/backtest/**/*_detail_*.parquet
 site/

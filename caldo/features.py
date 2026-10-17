@@ -47,6 +47,24 @@ def add_features(panel, scoring="ppr"):
     df["miss_rate8"] = miss.groupby(df.player_id).transform(
         lambda s: s.shift().rolling(8, min_periods=1).mean()).fillna(0)
 
+    # role and availability context known before the game
+    df["u_snap"] = _prior_ewm(df, "snap_pct", HL_USAGE)
+    prev_team = df[df.played == 1].groupby(["player_id", "season"]).team.last().rename("prev_team").reset_index()
+    prev_team["season"] += 1
+    df = df.merge(prev_team, on=["player_id", "season"], how="left")
+    df["new_team"] = (df.prev_team.notna() & (df.prev_team != df.team)).astype(float)
+    df["returning"] = (df.miss_streak >= 2).astype(float)
+    # Injured players slide down the depth chart while out; judge their role by
+    # the chart from their last game played, and use this week's chart only for
+    # players who are healthy and playing.
+    played_depth = df.depth_rank.where(df.played == 1)
+    last_depth = played_depth.groupby([df.player_id, df.season]).transform(lambda s: s.shift().ffill())
+    healthy = (df.on53 == 1) & (df.miss_streak == 0)
+    df["depth_eff"] = df.depth_rank.where(healthy | last_depth.isna(), last_depth)
+    df["depth1"] = (df.depth_eff == 1).astype(float)
+    df["depth3p"] = (df.depth_eff >= 3).astype(float)
+    df["depth_na"] = df.depth_eff.isna().astype(float)
+
     df["rookie"] = (df.draft_year == df.season).astype(float)
     df["log_pick"] = np.log(df.draft_pick.fillna(300).clip(1, 300))
     df["age"] = df.age.fillna(df.groupby("position").age.transform("median"))

@@ -37,9 +37,13 @@ TD_USAGE = {
     "TE": ["rz_targets", "i10_targets", "targets", "skill_tds"],
 }
 CONTEXT_TERMS = ["ln_itt", "ln_def", "home", "dome", "spread7"]
+ROLE_TERMS = ["u_snap", "no_snap", "depth1", "depth3p", "depth_na", "new_team", "returning", "rep_quest"]
+TRANSIENT = ["returning", "rep_quest"]  # describe the next game only, not the rest of the season
+AVAIL_FLAGS = ["res_inj", "res_dtr", "res_other", "pup", "ps", "cut", "rep_out", "rep_doubt", "rep_quest",
+               "prac_dnp", "prac_lim", "depth1", "depth3p", "depth_na", "returning"]
 
 
-def rating_matrix(df, pos, kind="pts", use_usage=True, use_history=True):
+def rating_matrix(df, pos, kind="pts", use_usage=True, use_history=True, use_role=True):
     """Design matrix for the player rating regression."""
     X = pd.DataFrame(index=df.index)
     has_hist = df.ewm_pts_l.notna()
@@ -63,13 +67,18 @@ def rating_matrix(df, pos, kind="pts", use_usage=True, use_history=True):
     X["age2"] = (df.age - 26) ** 2
     X["rookie_pick"] = df.rookie * (np.log(300) - df.log_pick)
     X["miss_rate8"] = df.miss_rate8
+    if use_role:
+        X["u_snap"] = df.u_snap.fillna(0)
+        X["no_snap"] = df.u_snap.isna().astype(float)
+        for c in ROLE_TERMS[2:]:
+            X[c] = df[c].fillna(0).astype(float)
     return X
 
 
 class Projector:
     def __init__(self, positions=("QB", "RB", "WR", "TE"), alpha=10.0, def_halflife=8.0,
                  def_prior=3.0, def_season_carry=0.4, terms=CONTEXT_TERMS,
-                 use_usage=True, use_history=True):
+                 use_usage=True, use_history=True, use_role=True, use_status=True):
         self.positions = positions
         self.alpha = alpha
         self.def_halflife = def_halflife
@@ -78,12 +87,14 @@ class Projector:
         self.terms = list(terms)
         self.use_usage = use_usage
         self.use_history = use_history
+        self.use_role = use_role
+        self.use_status = use_status
         self.rating_models, self.td_models, self.context, self.td_context = {}, {}, {}, {}
         self.avail = {}
 
     # ---------- stage A: player rating ----------
     def _fit_ridge(self, df, pos, kind):
-        X = rating_matrix(df, pos, kind, self.use_usage, self.use_history)
+        X = rating_matrix(df, pos, kind, self.use_usage, self.use_history, self.use_role)
         y = df.pts if kind == "pts" else (df.tds if pos == "QB" else df.skill_tds)
         m = Ridge(alpha=self.alpha).fit(X, y)
         m.feature_names = list(X.columns)
@@ -95,7 +106,7 @@ class Projector:
         for pos in self.positions:
             idx = df.position == pos
             if idx.any():
-                X = rating_matrix(df[idx], pos, kind, self.use_usage, self.use_history)
+                X = rating_matrix(df[idx], pos, kind, self.use_usage, self.use_history, self.use_role)
                 out[idx] = models[pos].predict(X)
         floor = 0.3 if kind == "pts" else 0.005
         return out.clip(lower=floor)
@@ -173,26 +184,34 @@ class Projector:
     # ---------- availability ----------
     HORIZONS = [0, 1, 2, 3, 5, 7, 10, 13, 16]
 
-    @staticmethod
-    def _avail_matrix(miss_streak, miss_rate8, played_last, rating, u_attempts, pos, k):
-        streak = np.asarray(miss_streak, float)
+    def _avail_matrix(self, d, k, pos):
+        """Features for P(plays the game k team-games ahead) from a frame of pre-game rows."""
+        streak = d.miss_streak.values.astype(float)
         lk = np.log1p(np.asarray(k, float))
         cols = {
             "s1": streak == 1, "s2": streak == 2, "s3": (streak >= 3) & (streak < 6), "s6": streak >= 6,
-            "lk": lk, "miss_rate8": np.asarray(miss_rate8, float),
-            "played_last": np.asarray(played_last, float), "ln_rating": np.log(np.asarray(rating, float)),
+            "lk": lk, "miss_rate8": d.miss_rate8.values.astype(float),
+            "played_last": d.played_last.values.astype(float), "ln_rating": np.log(d.rating.values.astype(float)),
         }
         for c in ("s1", "s2", "s3", "s6"):
             cols[f"{c}_lk"] = cols[c] * lk
         cols["mr_lk"] = cols["miss_rate8"] * lk
         if pos == "QB":  # starters throw; backups who mopped up don't keep playing
-            att = np.asarray(u_attempts, float)
+            att = d.u_attempts.fillna(0).values.astype(float)
             cols["att"] = np.minimum(att, 40) / 10
             cols["att_lk"] = cols["att"] * lk
+        if self.use_status:  # roster designation, injury report, practice and depth chart this week
+            for c in AVAIL_FLAGS:
+                v = d[c].fillna(0).values.astype(float)
+                cols[c] = v
+                cols[f"{c}_lk"] = v * lk
         return np.column_stack([np.asarray(v, float) for v in cols.values()])
 
     def _fit_availability(self, df):
-        """P(player plays the game k team-games ahead), logistic per position."""
+        """P(player plays the game k team-games ahead), logistic per position.
+
+        (A gradient-boosted version was tested and did no better out of sample.)
+        """
         from sklearn.linear_model import LogisticRegression
         d = df[df.completed].sort_values(["player_id", "season", "week"]).copy()
         d["rating"] = self.rating(d)
@@ -204,15 +223,13 @@ class Projector:
             for k in self.HORIZONS:
                 fut = g.shift(-k)[m]
                 ok = fut.notna().values
-                s = sub[ok]
-                X.append(self._avail_matrix(s.miss_streak, s.miss_rate8, s.played_last, s.rating,
-                                            s.u_attempts.fillna(0), pos, np.full(ok.sum(), k)))
+                X.append(self._avail_matrix(sub[ok], np.full(ok.sum(), k), pos))
                 y.append(fut.values[ok])
-            self.avail[pos] = LogisticRegression(C=1.0, max_iter=2000).fit(np.vstack(X), np.concatenate(y))
+            self.avail[pos] = LogisticRegression(C=1.0, max_iter=3000).fit(np.vstack(X), np.concatenate(y))
 
-    def availability(self, pos, miss_streak, miss_rate8, played_last, rating, u_attempts, k):
-        X = self._avail_matrix(miss_streak, miss_rate8, played_last, rating, u_attempts, pos, k)
-        return self.avail[pos].predict_proba(X)[:, 1]
+    def availability(self, pos, d, k):
+        """P(plays) for rows d (one per player, pre-game features of the next game) k games ahead."""
+        return self.avail[pos].predict_proba(self._avail_matrix(d, k, pos))[:, 1]
 
     # ---------- fit / predict ----------
     def fit(self, train, full, schedule):

@@ -28,6 +28,46 @@ Sleeper player IDs are mapped to nflverse IDs through the DynastyProcess crosswa
 
 `.github/workflows/refresh.yml` refits the model on the latest NFL data every Tuesday and Friday during the season and deploys `site/` to GitHub Pages. To turn it on, push the repo, set **Settings → Pages → Source** to **GitHub Actions**, and run the workflow once by hand. On a phone, open the Pages URL and choose **Add to Home Screen**.
 
+## Model v2: injuries, roles, and a blend with the market
+
+Comparing against ESPN, Sleeper and FantasyPros exposed one big gap. The model only saw missed games, so it couldn't tell an injured starter who'll return (A.J. Brown, IR-designated to return) from a backup who lost his job. It ranked Brown WR63 while the expert consensus had him WR23. v2 fixes that and adds three things:
+
+* **Roster status and injury reports** (nflverse weekly rosters + injury reports, 2011–2026). Each week a player is tagged IR, IR-designated to return, PUP, practice squad, cut, or on the 53. He also gets that week's Out/Doubtful/Questionable designation and practice participation. These feed the availability model, and injured rostered players now stay in the player pool while they're out.
+* **Role.** Depth-chart rank (from the last game played, so injured players aren't judged by where they sit on the chart while hurt), snap share, and whether he changed teams.
+* **Next-game-only tags.** "Questionable" and "first game back" only affect the next game, not the whole rest of the season.
+* **A blend with Sleeper's projections** (the Rotowire numbers in the Sleeper app). Their weekly projections are available back to 2018 exactly as they stood before kickoff, so the blend is fit and tested walk-forward.
+
+**Rest-of-season backtest, 2016–2025 (walk-forward):**
+
+| | Original | v2 without injury status | **v2** | Season avg × games left |
+|---|---|---|---|---|
+| QB rank correlation | 0.463 | 0.563 | **0.598** | 0.324 |
+| RB | 0.569 | 0.614 | **0.652** | 0.437 |
+| WR | 0.552 | 0.595 | **0.626** | 0.360 |
+| TE | 0.495 | 0.537 | **0.576** | 0.372 |
+| Right side of a 1-for-1 trade | 70.0% | 71.9% | **73.2%** | 63.5% |
+
+**Head-to-head with Sleeper, weekly, test seasons 2020–2025** (same player pool; blend weights learned only from earlier seasons):
+
+| Avg miss / rank correlation | QB | RB | WR | TE |
+|---|---|---|---|---|
+| Our model | 6.19 / 0.332 | 4.51 / 0.376 | 4.69 / 0.321 | 3.67 / 0.246 |
+| Sleeper | 6.05 / 0.328 | 4.37 / 0.449 | 4.65 / 0.347 | 3.67 / 0.286 |
+| **Blend** | **5.98 / 0.345** | **4.33 / 0.451** | **4.60 / 0.353** | **3.59 / 0.292** |
+
+**Blind spots** (`output/compare/blind_spots.csv`):
+* **Sleeper beats us** on news-driven situations: backups thrust into a starting role, first games back from injury, and rookies at RB/WR.
+* **We beat Sleeper** on QBs (they run about 3 points high) and on players listed Questionable, whom they overproject.
+
+Sleeper's projections are also an availability signal. When Sleeper projected an established player for a game, he played 99% of the time; when it left him out, 16%.
+
+**What the app uses:**
+* **Points per game when he plays:** 20–50% our model and the rest Sleeper, depending on position.
+* **Availability for the next game:** Sleeper's signal.
+* **Availability for later weeks:** an average of ours and theirs.
+
+**Agreement with the experts now:** the rest-of-season rank correlation with the FantasyPros consensus rose from 0.77–0.91 to 0.89–0.93 by position. That's about the same agreement ESPN has with FantasyPros (0.78–0.95). A.J. Brown went from WR63 to WR23, matching the consensus.
+
 ## The formula
 
 ```
@@ -116,6 +156,10 @@ python scripts/build_rankings.py --sleeper-user <name>   # also bundle a Sleeper
 python scripts/run_backtest.py               # 10-season backtest + ablations (~25 min)
 python scripts/run_backtest.py --quick       # full model only
 python scripts/calibrate_trades.py           # package weights (needs backtest output)
+python scripts/fetch_external.py             # Sleeper weekly projections 2018-now (for the blend)
+python scripts/quick_backtest.py --tag v4    # walk-forward backtest of the current model (~25 min)
+python scripts/fit_blend.py --tag v4         # head-to-head vs Sleeper, blind spots, blend weights
+python scripts/compare_models.py             # live agreement with Sleeper, ESPN, FantasyPros
 python scripts/build_web.py                  # bundle web/index.html
 ```
 
@@ -133,6 +177,8 @@ Data comes from [nflverse](https://github.com/nflverse): weekly player stats, pl
 | `caldo/tiers.py` | Jenks tiers |
 | `caldo/trade.py` | VORP, lineup math, league simulation, package weights |
 | `caldo/sleeper.py` | Sleeper API client, player-ID mapping, league snapshots |
+| `caldo/status.py` | Weekly roster status, injury reports, depth charts, snap counts |
+| `caldo/external.py` | Head-to-head scoring vs. Sleeper, blind spots, the blend |
 | `web/template.html` | Calculator UI (trade, Sleeper league, rankings, backtest); `build_web.py` bundles it |
 | `web/pwa/` | Manifest, service worker and icons for the installable app |
 | `.github/workflows/refresh.yml` | Scheduled refit and GitHub Pages deploy |
@@ -140,8 +186,8 @@ Data comes from [nflverse](https://github.com/nflverse): weekly player stats, pl
 
 ## Known limits
 
-* No depth charts or injury reports yet. A backup QB who started while the starter was hurt can project too high (e.g. Joe Flacco, Justin Fields in 2024). Adding nflverse depth charts and injury designations is the next step.
-* Players who haven't played a snap this season aren't projected (rookies before their debut, players on season-opening IR).
+* Injury severity still isn't modeled. The model knows a player is Out or on IR, but not whether it's a one-week hamstring or a broken leg. The Sleeper blend covers part of this, but a star listed Out this week (e.g. Lamar Jackson) can still project below the consensus.
+* The blend's availability signal is validated for the next game only. For later weeks it averages our estimate with Sleeper's current projections, which can't be backtested because only final pre-game projections are archived.
 * Redraft only: no K/DST projections and no dynasty or keeper age curves. K, DEF and IDP slots in Sleeper leagues are ignored.
 * Passing TDs are projected at 4 points. Leagues with 6-point passing TDs undervalue QBs a little (the app says so).
 * The trade finder doesn't model the free agent a team could add with a roster spot freed by a 2-for-1.

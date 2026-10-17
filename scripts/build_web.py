@@ -30,18 +30,57 @@ def backtest_summary(scoring="ppr"):
     ros = pd.read_csv(bt / f"ros_summary_{scoring}.csv")
     pos = ["QB", "RB", "WR", "TE"]
     abl = []
+    # ablations were run on the original model (v1); compare like with like
+    v1 = bt / "v1" / f"ros_summary_{scoring}.csv"
+    ros_abl = pd.read_csv(v1) if v1.exists() else ros
     for v, label in ABLATION_LABELS.items():
         m = f"m_{v}"
         if m not in set(wk.model):
             continue
         dw = (wk[(wk.model == m) & wk.position.isin(pos)].rank_corr.mean()
               - wk[(wk.model == "m_full") & wk.position.isin(pos)].rank_corr.mean())
-        dr = (ros[(ros.model == m) & ros.position.isin(pos)].rank_corr.mean()
-              - ros[(ros.model == "m_full") & ros.position.isin(pos)].rank_corr.mean())
+        dr = (ros_abl[(ros_abl.model == m) & ros_abl.position.isin(pos)].rank_corr.mean()
+              - ros_abl[(ros_abl.model == "m_full") & ros_abl.position.isin(pos)].rank_corr.mean())
+        if pd.isna(dr) or pd.isna(dw):
+            continue
         abl.append({"label": label, "weekly": round(float(dw), 4), "ros": round(float(dr), 4)})
     clean = lambda d: json.loads(d.round(4).to_json(orient="records"))
     return {"seasons": f"{BACKTEST_SEASONS[0]}–{BACKTEST_SEASONS[-1]}", "weekly": clean(wk), "ros": clean(ros),
             "ablation": abl}
+
+
+def _clean_nan(x):
+    """JSON has no NaN; the page's JSON.parse would reject the whole payload."""
+    if isinstance(x, float) and x != x:
+        return None
+    if isinstance(x, dict):
+        return {k: _clean_nan(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_clean_nan(v) for v in x]
+    return x
+
+
+def compare_summary():
+    """Head-to-head vs. Sleeper, blind spots, blend config and live agreement, for the app."""
+    c = OUT_DIR / "compare"
+    out = {}
+    clean = lambda d: json.loads(d.round(4).to_json(orient="records"))
+    for name in ["head_to_head", "blind_spots", "weekly_accuracy", "ros_agreement"]:
+        f = c / f"{name}.csv"
+        if f.exists():
+            out[name] = clean(pd.read_csv(f))
+    b = OUT_DIR / "blend.json"
+    if b.exists():
+        cfg = json.loads(b.read_text())
+        out["blend"] = {"weights": cfg["weights"], "availability": {k: v for k, v in cfg["availability"].items() if k != "healthy_curve"}}
+    old, new = OUT_DIR / "backtest" / "v1" / "ros_summary_ppr.csv", OUT_DIR / "backtest" / "ros_summary_ppr.csv"
+    if old.exists() and new.exists():
+        a, b2 = pd.read_csv(old), pd.read_csv(new)
+        pick = lambda d, m: d[d.model == m].set_index("position")
+        imp = pick(a, "m_full")[["rank_corr", "pair_acc"]].join(pick(b2, "m_full")[["rank_corr", "pair_acc"]], rsuffix="_new")
+        imp = imp.join(pick(b2, "m_no_status")[["rank_corr", "pair_acc"]].add_suffix("_nostatus"))
+        out["improvement"] = clean(imp.reset_index())
+    return out
 
 
 def main():
@@ -56,15 +95,16 @@ def main():
     f = pd.read_csv(OUT_DIR / "formula_ppr.csv")
     mult = f[f.part == "multiplier"].pivot(index="position", columns="term", values="coef")
     data["meta"]["formula"] = {"multipliers": json.loads(mult.round(4).to_json(orient="index"))}
+    data["meta"]["compare"] = compare_summary()
     pw = OUT_DIR / "package_weights.json"
     if pw.exists():
         data["meta"]["package"] = json.loads(pw.read_text())
     tpl = (ROOT / "web" / "template.html").read_text()
-    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+    payload = json.dumps(_clean_nan(data), separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
     page = tpl.replace("/*__DATA__*/", payload)
     if args.snapshot:
         data["sleeper_snapshot"] = json.loads(Path(args.snapshot).read_text())
-        bundled = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+        bundled = json.dumps(_clean_nan(data), separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
         Path(args.out).write_text(tpl.replace("/*__DATA__*/", bundled).replace("<!--__PWA__-->\n", ""))
         print(f"wrote {args.out} with a bundled Sleeper league")
         return

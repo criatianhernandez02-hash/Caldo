@@ -262,7 +262,7 @@ tr.tierbreak td { background: color-mix(in srgb, var(--flag) 12%, transparent); 
         <input id="rq" placeholder="Filter by name or team" aria-label="Filter rankings">
       </div>
       <div class="tablebox"><table id="rtable"></table></div>
-      <p class="note" style="margin-top:10px">ROS = projected points from this week through week 17, discounted for the chance of missing games. Sched = how much the remaining matchups and venues move a typical player's output. Value = ROS points above a replacement-level player.</p>
+      <p class="note" style="margin-top:10px">ROS = projected points from this week through week 17, discounted for the chance of missing games. It blends our model with Sleeper's weekly projections (see Formula &amp; backtest); "Model only" is ours alone. Sched = how much the remaining matchups and venues move a typical player's output. Value = ROS points above a replacement-level player.</p>
     </section>
 
     <section id="pane-how" hidden></section>
@@ -328,6 +328,8 @@ function recompute() {
   TIERS = tiers();
 }
 const pts = p => PTS[p.id];
+// model-only rest-of-season points in the active scoring (same reception math, applied to the unblended ppr number)
+const modelPts = p => p.ros.ppr ? p.ros_model * PTS[p.id] / p.ros.ppr : p.ros_model;
 const ppg = p => PTS[p.id] / Math.max(p.xg, .5);
 const slots = () => S.lg ? S.lg.slots : DEFAULT_SLOTS;
 const teamsN = () => S.lg ? S.lg.teams : S.teams;
@@ -864,14 +866,14 @@ function renderRank() {
   if (S.q) rows = rows.filter(p => p.name.toLowerCase().includes(S.q) || p.team.toLowerCase().includes(S.q));
   if (!single) rows = rows.slice(0, 200);
   const maxV = Math.max(...P.map(value), 1), me = myTeam();
-  let html = `<thead><tr><th class="n">#</th><th>Player</th><th>Team</th><th>Tier</th><th class="n">ROS pts</th><th class="n">Pts/g</th><th class="n">ROS TD</th><th class="n">Exp. G</th><th class="n">Sched</th><th>Next</th><th class="n">Value</th>${lg ? '<th>Rostered by</th>' : ''}<th></th></tr></thead><tbody>`;
+  let html = `<thead><tr><th class="n">#</th><th>Player</th><th>Team</th><th>Tier</th><th class="n">ROS pts</th><th class="n" title="Our model alone, before blending with Sleeper's projections">Model only</th><th class="n">Pts/g</th><th class="n">ROS TD</th><th class="n">Exp. G</th><th class="n">Sched</th><th>Next</th><th class="n">Value</th>${lg ? '<th>Rostered by</th>' : ''}<th></th></tr></thead><tbody>`;
   let lastTier = null;
   for (const p of rows) {
     const t = TIERS[p.id];
-    if (single && !S.q && t !== lastTier) { html += `<tr class="tierbreak"><td colspan="${lg ? 13 : 12}">TIER ${t}</td></tr>`; lastTier = t; }
+    if (single && !S.q && t !== lastTier) { html += `<tr class="tierbreak"><td colspan="${lg ? 14 : 13}">TIER ${t}</td></tr>`; lastTier = t; }
     const se = (p.sched - 1) * 100, v = value(p), own = lg && lg.owner[p.id];
     html += `<tr class="${me && own === me.rid ? 'mine' : ''}"><td class="n">${ranks.get(p.id)}</td><td><span class="pos ${p.pos}">${p.pos}</span> ${esc(p.name)}${injBadge(p)}</td><td>${p.team}</td>
-      <td><span class="tier">${p.pos}${t}</span></td><td class="n">${fmt(pts(p))}</td><td class="n">${fmt(ppg(p))}</td><td class="n">${fmt(p.td)}</td>
+      <td><span class="tier">${p.pos}${t}</span></td><td class="n">${fmt(pts(p))}</td><td class="n note">${p.ros_model != null ? fmt(modelPts(p)) : '–'}</td><td class="n">${fmt(ppg(p))}</td><td class="n">${fmt(p.td)}</td>
       <td class="n">${fmt(p.xg)}/${p.gl}</td><td class="n ${se > 1 ? 'good' : se < -1 ? 'bad' : ''}">${sgn(se)}%</td><td>${p.next}</td>
       <td class="n"><span class="bar" style="width:${Math.round(40 * v / maxV)}px"></span> ${fmt(v)}</td>
       ${lg ? `<td>${own ? esc(teamOf(own).name.slice(0, 22)) : '<span class="good">Free agent</span>'}</td>` : ''}
@@ -970,9 +972,64 @@ Trade value = ROS value − replacement level</div>
       ${abl.map(a => `<tr><td>${esc(a.label)}</td><td class="n ${a.weekly < -0.001 ? 'bad' : ''}">${sgn(a.weekly, 3)}</td><td class="n ${a.ros < -0.001 ? 'bad' : ''}">${sgn(a.ros, 3)}</td></tr>`).join('')}
       </tbody></table></div></div>` : ''}
   </div>
+  ${compareSection()}
   ${pk ? `<div class="panel" style="margin-top:16px"><h3>How multi-player deals are scored</h3>
     <p>We drafted ${pk.n_leagues} simulated 12-team leagues from the backtest's week-7 projections (four per season) and made ${pk.n_trades.toLocaleString()} random trades between them. Regressing each team's change in starting-lineup points on the pieces exchanged gives the weights used here. The best player you receive counts fully, the second ${Math.round(GET_W[1] * 100)}%, the third ${Math.round(GET_W[2] * 100)}%. Players you send away count in full (the fit put them at 100%, 101% and 114%).</p>
     <p class="note">These generic weights explain ${Math.round(pk.r2 * 100)}% of how much a trade changes a team's lineup, about the same as a plain sum (${Math.round(pk.r2_plain_sum * 100)}%). The rest depends on the roster you already have, which is why connecting your Sleeper league gives the better read.</p></div>` : ''}`;
+}
+
+function compareSection() {
+  const C = META.compare; if (!C || !C.head_to_head) return '';
+  const POS = SKILL, h = C.head_to_head;
+  const g = (pos, m, k) => (h.find(r => r.position === pos && r.model === m) || {})[k];
+  const rows = POS.map(p => ({ label: p, a: g(p, 'ours', 'rank_corr'), b: g(p, 'sleeper', 'rank_corr'), c: g(p, 'blend', 'rank_corr') }));
+  const maeRow = m => POS.map(p => `<td class="n">${fmt(g(p, m, 'MAE'), 2)}</td>`).join('');
+  const W = C.blend && C.blend.weights, A = C.blend && C.blend.availability;
+  const spots = (C.blind_spots || []).filter(r => r.segment !== 'Everyone');
+  const segs = [...new Set(spots.map(r => r.segment))];
+  const edge = (sg, p) => { const r = spots.find(x => x.segment === sg && x.position === p); return r ? r.edge : null; };
+  const imp = C.improvement || [];
+  const agree = C.ros_agreement || [];
+  const ag = (pair, p) => (agree.find(r => r.pair === pair && r.position === p) || {}).rank_corr;
+  const wa = C.weekly_accuracy || [];
+  const wv = (p, m) => (wa.find(r => r.position === p && r.model === m) || {}).rank_corr;
+  return `<h2 style="font-size:30px;text-transform:uppercase;margin:28px 0 6px">How we compare</h2>
+  <p class="lede">Scored against Sleeper's projections (the Rotowire numbers in the Sleeper app) on every game from 2018 to 2025, using what each side projected before kickoff. Blend weights for each season were learned only from the seasons before it.</p>
+  <div class="cols">
+    <div class="panel"><h3>Weekly ranking accuracy</h3>
+      <p class="note">Rank correlation on the same pool of players, test seasons 2020–2025.</p>
+      ${hbar(rows, ['a', 'b', 'c'], ['var(--turf-2)', 'var(--muted)', 'var(--flag)'], ['Our model', 'Sleeper', 'Blend (what this app uses)'], { min: 0, max: 0.5, ticks: [0, .1, .2, .3, .4, .5] })}
+      <div class="tablebox"><table><thead><tr><th>Average miss (pts)</th>${POS.map(p => `<th class="n">${p}</th>`).join('')}</tr></thead><tbody>
+      <tr><td>Our model</td>${maeRow('ours')}</tr><tr><td>Sleeper</td>${maeRow('sleeper')}</tr><tr><td><b>Blend</b></td>${maeRow('blend')}</tr></tbody></table></div>
+    </div>
+    <div class="panel"><h3>Blind spots</h3>
+      <p class="note">Sleeper's average miss minus ours, by situation. Green means we're closer; red means they are.</p>
+      <div class="tablebox"><table><thead><tr><th>Situation</th>${POS.map(p => `<th class="n">${p}</th>`).join('')}</tr></thead><tbody>
+      ${segs.map(sg => `<tr><td>${esc(sg)}</td>${POS.map(p => { const v = edge(sg, p); return `<td class="n ${v > .1 ? 'good' : v < -.1 ? 'bad' : ''}">${v == null ? '–' : sgn(v, 2)}</td>`; }).join('')}</tr>`).join('')}
+      </tbody></table></div>
+      <p class="note" style="margin-top:8px">Sleeper is better on backups thrust into a starting role, first games back from injury, and rookies, all situations driven by news. We're better on QBs and on players listed Questionable, whom Sleeper overprojects.</p>
+    </div>
+  </div>
+  <div class="cols" style="margin-top:16px">
+    <div class="panel"><h3>The blend</h3>
+      ${W ? `<div class="tablebox"><table><thead><tr><th></th>${POS.map(p => `<th class="n">${p}</th>`).join('')}</tr></thead><tbody>
+      <tr><td>Weight on our model</td>${POS.map(p => `<td class="n">${Math.round(W[p].w_ours * 100)}%</td>`).join('')}</tr>
+      <tr><td>Weight on Sleeper</td>${POS.map(p => `<td class="n">${Math.round((1 - W[p].w_ours) * 100)}%</td>`).join('')}</tr></tbody></table></div>` : ''}
+      ${A ? `<p style="margin-top:10px">Sleeper's projections also carry injury news our stats can't see. When Sleeper projected an established player for a game, he played <b>${Math.round(A.present * 100)}%</b> of the time; when it left him out, <b>${Math.round(A.absent * 100)}%</b>. The app uses that for the next game and averages it with our own estimate for later weeks.</p>` : ''}
+    </div>
+    ${imp.length ? `<div class="panel"><h3>What the injury data added</h3>
+      <p class="note">Rest-of-season rank correlation, 10-season walk-forward backtest. "New" adds weekly IR and injury-report status, depth charts and snap counts.</p>
+      <div class="tablebox"><table><thead><tr><th></th><th class="n">Original</th><th class="n">New, without injury status</th><th class="n">New</th></tr></thead><tbody>
+      ${imp.map(r => `<tr><td>${esc(r.position)}</td><td class="n">${r.rank_corr != null ? r.rank_corr.toFixed(3) : (r.pair_acc * 100).toFixed(1) + '%'}</td><td class="n">${r.rank_corr_nostatus != null ? r.rank_corr_nostatus.toFixed(3) : (r.pair_acc_nostatus * 100).toFixed(1) + '%'}</td><td class="n"><b>${r.rank_corr_new != null ? r.rank_corr_new.toFixed(3) : (r.pair_acc_new * 100).toFixed(1) + '%'}</b></td></tr>`).join('')}
+      </tbody></table></div><p class="note" style="margin-top:8px">The trade row is the share of 1-for-1 trades where the projection picked the side that actually scored more.</p></div>` : ''}
+  </div>
+  ${agree.length ? `<div class="panel" style="margin-top:16px"><h3>Agreement with ESPN and FantasyPros right now</h3>
+    <p class="note">Rank correlation of rest-of-season rankings at the top of each position (1.0 = identical order). FantasyPros is the expert consensus.</p>
+    <div class="tablebox"><table><thead><tr><th>Pair</th>${POS.map(p => `<th class="n">${p}</th>`).join('')}</tr></thead><tbody>
+    ${['ours vs espn', 'ours vs fp', 'model vs espn', 'model vs fp', 'espn vs fp'].map(pr => `<tr><td>${pr.replace('ours', 'This app (blend)').replace('model', 'Our model alone').replace('fp', 'FantasyPros').replace('espn', 'ESPN').replace('sleeper', 'Sleeper')}</td>${POS.map(p => `<td class="n">${fmt(ag(pr, p), 2)}</td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    ${wa.length ? `<p class="note" style="margin-top:8px">This season so far (weeks 1–${META.week - 1}), weekly ranking accuracy of our model alone: ${POS.map(p => `${p} ours ${fmt(wv(p, 'ours'), 2)} · ESPN ${fmt(wv(p, 'espn'), 2)} · Sleeper ${fmt(wv(p, 'sleeper'), 2)}`).join('; ')}. Five weeks is a small sample.</p>` : ''}
+  </div>` : ''}`;
 }
 
 function refresh() { recompute(); renderHeader(); renderTrade(); renderLeague(); renderRank();

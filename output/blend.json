@@ -1,0 +1,194 @@
+{
+  "weights": {
+    "QB": {
+      "w_ours": 0.3,
+      "sleeper_scale": 0.8261,
+      "scale_ppr": 0.8248,
+      "scale_half": 0.8245,
+      "scale_std": 0.8242
+    },
+    "RB": {
+      "w_ours": 0.2,
+      "sleeper_scale": 1.0453,
+      "scale_ppr": 1.0439,
+      "scale_half": 1.0457,
+      "scale_std": 1.048
+    },
+    "WR": {
+      "w_ours": 0.3,
+      "sleeper_scale": 1.0121,
+      "scale_ppr": 1.0124,
+      "scale_half": 1.0144,
+      "scale_std": 1.0176
+    },
+    "TE": {
+      "w_ours": 0.5,
+      "sleeper_scale": 1.0746,
+      "scale_ppr": 1.0751,
+      "scale_half": 1.0738,
+      "scale_std": 1.0716
+    }
+  },
+  "availability": {
+    "present": 0.9865,
+    "absent": 0.1625,
+    "absent_n": 8528,
+    "present_n": 19372,
+    "healthy_curve": {
+      "1": 0.9053,
+      "2": 0.864,
+      "3": 0.8384,
+      "4": 0.8196,
+      "5": 0.8044,
+      "6": 0.7926,
+      "7": 0.7832,
+      "8": 0.7757,
+      "9": 0.7643,
+      "10": 0.7543,
+      "11": 0.7471,
+      "12": 0.7323
+    }
+  },
+  "weights_by_test_season": {
+    "2020": {
+      "QB": {
+        "w_ours": 0.3,
+        "sleeper_scale": 0.8284
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.0638
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0334
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.0751
+      }
+    },
+    "2021": {
+      "QB": {
+        "w_ours": 0.4,
+        "sleeper_scale": 0.8424
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.0545
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0254
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.0529
+      }
+    },
+    "2022": {
+      "QB": {
+        "w_ours": 0.3,
+        "sleeper_scale": 0.8224
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.0477
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0003
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.025
+      }
+    },
+    "2023": {
+      "QB": {
+        "w_ours": 0.3,
+        "sleeper_scale": 0.8146
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.045
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0003
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.038
+      }
+    },
+    "2024": {
+      "QB": {
+        "w_ours": 0.4,
+        "sleeper_scale": 0.819
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.0499
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0088
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.0594
+      }
+    },
+    "2025": {
+      "QB": {
+        "w_ours": 0.4,
+        "sleeper_scale": 0.826
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.0543
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0147
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.07
+      }
+    },
+    "2026": {
+      "QB": {
+        "w_ours": 0.3,
+        "sleeper_scale": 0.8261,
+        "scale_ppr": 0.8248,
+        "scale_half": 0.8245,
+        "scale_std": 0.8242
+      },
+      "RB": {
+        "w_ours": 0.2,
+        "sleeper_scale": 1.0453,
+        "scale_ppr": 1.0439,
+        "scale_half": 1.0457,
+        "scale_std": 1.048
+      },
+      "WR": {
+        "w_ours": 0.3,
+        "sleeper_scale": 1.0121,
+        "scale_ppr": 1.0124,
+        "scale_half": 1.0144,
+        "scale_std": 1.0176
+      },
+      "TE": {
+        "w_ours": 0.5,
+        "sleeper_scale": 1.0746,
+        "scale_ppr": 1.0751,
+        "scale_half": 1.0738,
+        "scale_std": 1.0716
+      }
+    }
+  },
+  "seasons": "2018-2025",
+  "test_seasons": "2020-2025"
+}

@@ -5,11 +5,13 @@ a season through the end of that regular season. Rows where the player did
 not record a stat have played=0 and 0 points, so rest-of-season totals reflect
 injuries, benchings and byes exactly as a fantasy manager would feel them.
 """
+import urllib.error
 import urllib.request
 
 import numpy as np
 import pandas as pd
 
+from . import status
 from .config import CACHE_DIR, FIRST_SEASON, POSITIONS, RAW_DIR, SCORING, SOURCES
 
 STAT_COLS = [
@@ -38,6 +40,12 @@ def fetch(last_season, refresh_current=True):
         _download(SOURCES["pbp"].format(season=season), RAW_DIR / "pbp" / f"play_by_play_{season}.parquet", force)
     _download(SOURCES["games"], RAW_DIR / "games.csv", refresh_current)
     _download(SOURCES["players"], RAW_DIR / "players.csv", refresh_current)
+    for season in range(FIRST_SEASON, last_season + 1):
+        for rel, url in status.EXTRA_SOURCES.items():
+            try:
+                _download(url.format(season=season), RAW_DIR / rel.format(season=season), refresh_current and season == last_season)
+            except urllib.error.HTTPError:  # snap counts start in 2013, etc.
+                pass
 
 
 def load_games():
@@ -104,33 +112,45 @@ def load_player_games(last_season):
 
 
 def build_panel(last_season, use_cache=True):
-    """Player x team-game panel including games the player missed."""
+    """Player x team-game panel.
+
+    A player is in the panel from the first week he either records a stat or
+    sits on an NFL roster (active, inactive, IR, PUP), so injured starters are
+    projected while they are out. Rows where he did not play have played=0.
+    """
     cache = CACHE_DIR / f"panel_{last_season}.parquet"
     if use_cache and cache.exists():
         return pd.read_parquet(cache), load_games()
     tg = load_games()
     pg = load_player_games(last_season)
+    seasons = list(range(FIRST_SEASON, last_season + 1))
+    rs = status.roster_status(seasons)
+    rostered = rs[rs.on53 | rs.res_inj | rs.res_dtr | rs.pup]
 
-    # Every team game from the player's first appearance of the season onward,
-    # attributed to the team he most recently played for.
-    first = pg.groupby(["player_id", "season"]).week.min().rename("first_week").reset_index()
     sched = tg[["season", "week", "team", "game_id"]]
     rows = []
-    for (season), grp in pg.groupby("season"):
+    for season in seasons:
         weeks = sched[sched.season == season]
         all_weeks = np.sort(weeks.week.unique())
-        f = first[first.season == season]
-        # player x week grid from first appearance on
-        grid = f.loc[f.index.repeat(len(all_weeks))].assign(week=np.tile(all_weeks, len(f)))
+        p = pg[pg.season == season][["player_id", "week", "team"]].drop_duplicates(["player_id", "week"])
+        r = rostered[rostered.season == season][["player_id", "week", "team"]].drop_duplicates(["player_id", "week"])
+        first = pd.concat([p, r]).groupby("player_id").week.min().rename("first_week").reset_index()
+        grid = first.loc[first.index.repeat(len(all_weeks))].assign(week=np.tile(all_weeks, len(first)))
         grid = grid[grid.week >= grid.first_week]
-        tm = grp[["player_id", "week", "team"]].drop_duplicates(["player_id", "week"])
-        grid = grid.merge(tm, on=["player_id", "week"], how="left").sort_values(["player_id", "week"])
+        grid = grid.merge(p.rename(columns={"team": "team_g"}), on=["player_id", "week"], how="left") \
+                   .merge(r.rename(columns={"team": "team_r"}), on=["player_id", "week"], how="left")
+        grid["team"] = grid.team_g.fillna(grid.team_r)
+        grid = grid.sort_values(["player_id", "week"])
         grid["team"] = grid.groupby("player_id").team.ffill()
+        grid["season"] = season
         grid = grid.merge(weeks, on=["season", "week", "team"], how="inner")  # drops byes
-        rows.append(grid.drop(columns="first_week"))
+        rows.append(grid[["player_id", "season", "week", "team", "game_id"]])
     panel = pd.concat(rows, ignore_index=True)
 
     meta = pg.sort_values(["season", "week"]).groupby("player_id")[["player_display_name", "position"]].last()
+    rmeta = rs.sort_values(["season", "week"]).groupby("player_id")[["full_name", "position"]].last() \
+              .rename(columns={"full_name": "player_display_name"})
+    meta = pd.concat([rmeta[~rmeta.index.isin(meta.index)], meta])
     panel = panel.merge(meta, left_on="player_id", right_index=True)
     keep = [c for c in pg.columns if c not in ("player_display_name", "position", "season", "week", "team")]
     panel = panel.merge(pg[keep], on=["player_id", "game_id"], how="left")
@@ -140,14 +160,36 @@ def build_panel(last_season, use_cache=True):
 
     ctx = tg[["game_id", "team", "opp", "home", "itt", "spread", "total", "rest", "dome", "gameday", "completed"]]
     panel = panel.merge(ctx, on=["game_id", "team"], how="left")
+
+    # roster designation for the week; future weeks carry the latest known one
+    panel = panel.merge(rs[["season", "week", "player_id"] + status.STATUS_FLAGS], on=["season", "week", "player_id"], how="left")
+    last_week = rs.groupby("season").week.max()
+    known = panel.week <= panel.season.map(last_week)
+    missing = panel.on53.isna()
+    for c in status.STATUS_FLAGS:
+        panel.loc[missing & known, c] = (c == "cut")
     panel = panel.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
+    panel[status.STATUS_FLAGS] = panel.groupby(["player_id", "season"])[status.STATUS_FLAGS].ffill()
+    panel["on53"] = panel.on53.fillna(True)
+    panel[status.STATUS_FLAGS] = panel[status.STATUS_FLAGS].fillna(False).astype(float)
+
+    inj = status.injury_reports(seasons)
+    panel = panel.merge(inj, on=["season", "week", "player_id"], how="left")
+    panel[status.REPORT_FLAGS] = panel[status.REPORT_FLAGS].fillna(False).astype(float)
+
+    depth = status.depth_ranks(seasons, tg)
+    panel = panel.merge(depth, on=["season", "week", "player_id"], how="left")
+    panel["depth_rank"] = panel.groupby(["player_id", "season"]).depth_rank.ffill()
+
+    snaps = status.snap_shares(seasons)
+    panel = panel.merge(snaps, on=["game_id", "player_id"], how="left")
 
     players = pd.read_csv(RAW_DIR / "players.csv", low_memory=False,
                           usecols=["gsis_id", "birth_date", "draft_pick", "draft_year", "rookie_season"])
     players = players.rename(columns={"gsis_id": "player_id"}).drop_duplicates("player_id")
     panel = panel.merge(players, on="player_id", how="left")
     panel["age"] = panel.season - pd.to_datetime(panel.birth_date, errors="coerce").dt.year
-    panel = panel.drop(columns=["birth_date"])
+    panel = panel.drop(columns=["birth_date"]).sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     panel.to_parquet(cache)
