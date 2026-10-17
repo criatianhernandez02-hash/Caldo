@@ -2,17 +2,19 @@
 
     python research/props_backtest.py <props_dir>
 
-Needs the download from fetch_kalshi_props.py and research/out/nfl_player_yards_preds.csv
-(nfl_player_yards.py). For every settled "Player: k+" market it takes the last hourly quote at or
+Needs the download from fetch_kalshi_props.py; fits the player formula itself
+(nfl_player_yards.py, 2018-2023). For every settled "Player: k+" market it takes the last hourly quote at or
 before kickoff and 1 hour before, then reports
   1. how well Kalshi's prices are calibrated, and returns by price bucket (taker at the ask + fee,
      maker at the bid), YES and NO sides;
   2. accuracy of the formula vs Kalshi on the same markets;
   3. betting the formula's disagreements (YES when formula > ask + fee, NO when 1 - formula > NO ask + fee).
 2025 (historical, weeks 4-18, half the games, middle rung of each ladder) is the independent
-test season; 2026 is split into weeks 1-3 and 4-6. Standard errors are clustered by player-game (the rungs of one player's ladder move together).
-Only players who appear in that game's box score are scored ("active" - inactives are announced
-90 minutes before kickoff, and Kalshi's price already reflects them).
+test season; 2026 is split into weeks 1-3 and 4-6. Standard errors are clustered by player-game
+(the rungs of one player's ladder move together).
+Players with no box-score line in the game (active but no stats, or a late scratch) are kept:
+their formula comes from their history (nfl_player_yards.pregame_absent); late scratches drop out
+through the price filters (a zero bid). Rookies in their first game have no formula and are skipped.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from research.kalshi_games import taker_fee  # noqa: E402
-from research.nfl_player_yards import build, fit_all, norm_name  # noqa: E402
+from research.nfl_player_yards import build, fit_all, norm_name, pregame_absent  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
 SERIES = {"KXNFLRECYDS": "receiving_yards", "KXNFLRSHYDS": "rushing_yards", "KXNFLREC": "receptions"}
@@ -61,7 +63,7 @@ def load(props_dir: Path) -> pd.DataFrame:
                 if not m:
                     continue
                 row = {"series": series, "stat": stat, "ticker": m["ticker"], "game_id": m["game_id"],
-                       "kickoff": m["kickoff"], "name": m["title"].split(":")[0].strip(),
+                       "kickoff": m["kickoff"], "name": (m.get("yes_sub_title") or m["title"]).split(":")[0].strip(),
                        "strike": float(m["floor_strike"]), "won": m["result"] == "yes",
                        "volume": float(m.get("volume_fp") or 0), "middle_rung": m["ticker"] in middle}
                 for label, t in (("0", m["kickoff"]), ("1", m["kickoff"] - 3600)):
@@ -80,13 +82,19 @@ def load(props_dir: Path) -> pd.DataFrame:
 def attach_formula(df: pd.DataFrame) -> pd.DataFrame:
     s = build()
     models = fit_all(s)
-    s = s[s["game_id"].isin(df["game_id"].unique())]
+    games = s[s["game_id"].isin(df["game_id"].unique())]
+    in_box = set(zip(games["game_id"], games["name_key"]))
+    want = df[["game_id", "name_key"]].drop_duplicates()
+    absent = pregame_absent(s, want[[k not in in_box for k in zip(want["game_id"], want["name_key"])]])
     out = []
     for stat, m in models.items():
-        part = df[df["stat"] == stat].merge(
-            s.loc[m.usable(s), ["game_id", "name_key", "position", stat] + m.features], on=["game_id", "name_key"], how="left")
+        part = df[df["stat"] == stat]
         if part.empty:
             continue
+        feats = [games.loc[m.usable(games), ["game_id", "name_key", "position", stat] + m.features]]
+        if len(absent):
+            feats.append(absent.loc[m.usable(absent), ["game_id", "name_key", "position"] + m.features])
+        part = part.merge(pd.concat(feats, ignore_index=True), on=["game_id", "name_key"], how="left")
         ok = part[m.features].notna().all(axis=1)
         if not ok.any():
             continue
@@ -95,8 +103,8 @@ def attach_formula(df: pd.DataFrame) -> pd.DataFrame:
         part = part.rename(columns={stat: "actual"})
         out.append(part[[c for c in part.columns if c not in m.features]])
     d = pd.concat(out, ignore_index=True)
-    d["active"] = d["actual"].notna()
-    # sanity: settlement should agree with the box score for active players
+    d["active"] = d["actual"].notna()  # has a box-score line in this game
+    # sanity: settlement should agree with the box score for players with a line
     d["won_check"] = d["actual"] > d["strike"]
     return d
 
@@ -133,7 +141,7 @@ def bucket_table(d: pd.DataFrame, when: str) -> pd.DataFrame:
 
 
 def bet_table(d: pd.DataFrame, when: str) -> pd.DataFrame:
-    x = d[d.active & d.p_formula.notna()].dropna(subset=[f"bid_{when}", f"ask_{when}"])
+    x = d[d.p_formula.notna()].dropna(subset=[f"bid_{when}", f"ask_{when}"])
     x = x[(x[f"ask_{when}"] - x[f"bid_{when}"] <= 0.10) & (x[f"bid_{when}"] > 0)]
     yes_cost = x[f"ask_{when}"] + taker_fee(x[f"ask_{when}"])
     no_ask = 1 - x[f"bid_{when}"]
@@ -163,7 +171,7 @@ def main(props_dir: str) -> None:
     pd.set_option("display.width", 220)
     d = attach_formula(load(Path(props_dir)))
     print("markets:", len(d), "| by stat:", d.groupby("stat").size().to_dict(), "| periods:", d.period.value_counts().to_dict())
-    print("player-games:", d.pg.nunique(), "| matched to box score (active):", round(d.active.mean(), 3),
+    print("player-games:", d.pg.nunique(), "| with a box-score line:", round(d.active.mean(), 3),
           "| formula available:", round(d.p_formula.notna().mean(), 3))
     a = d[d.active]
     print("settlement agrees with box score:", round(float((a.won == a.won_check).mean()), 4))
@@ -179,12 +187,12 @@ def main(props_dir: str) -> None:
                 p = p[p.middle_rung]
             elif period.startswith("2025"):
                 continue  # only middle rungs were downloaded for 2025
-            x = p[p.active & p.p_formula.notna()].dropna(subset=[f"bid_{when}", f"ask_{when}"])
+            x = p[p.p_formula.notna()].dropna(subset=[f"bid_{when}", f"ask_{when}"])
             x = x[(x[f"ask_{when}"] - x[f"bid_{when}"] <= 0.10) & (x[f"bid_{when}"] > 0)]
             if x.empty:
                 continue
             mid = (x[f"bid_{when}"] + x[f"ask_{when}"]) / 2
-            print(f"\n######## {period}, {rungs}: {len(x)} active-player markets at kickoff ########")
+            print(f"\n######## {period}, {rungs}: {len(x)} markets at kickoff ({int((~x.active).sum())} with no box-score line) ########")
             print(f"Accuracy (log loss): Kalshi mid {ll(mid, x.won):.4f} | formula {ll(x.p_formula, x.won):.4f}")
             for stat, g in x.groupby("stat"):
                 m = (g[f"bid_{when}"] + g[f"ask_{when}"]) / 2

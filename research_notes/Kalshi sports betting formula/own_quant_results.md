@@ -145,3 +145,45 @@ Fill rates 40–70% at the bid, ~15% two cents under. Adverse selection dominate
 
 ## H. Sportsbook close vs Kalshi, NFL 2025 + 2026 (720 matched sides)
 Kalshi's kickoff mid minus the de-vigged sportsbook closing probability, by sportsbook bucket: <20%: −0.1 pt; 20–30%: −0.3; 30–40%: −0.6; 40–50%: −0.2; 50–60%: +0.2; 60–70%: +0.6; 70–80%: +0.3; >80%: +0.1. Kalshi tilts very slightly toward favourites but tracks the sportsbook to within a point. Sides where the sportsbook's fair probability beat Kalshi's ask + fee at kickoff: 47 in 2025 (+18.3% ±19.8%) and 11 in 2026 — too rare and too noisy to be a strategy.
+
+## I. Player formula vs Kalshi NFL player markets (receiving yards, rushing yards, receptions)
+
+Formula: research/nfl_player_yards.py (usage × shrunk efficiency × environment × opponent, Poisson mean fitted on 2018–23, empirical ratio distribution). Out of sample 2025: 50+ receiving yards hit 15.5% vs formula 17.2% (log loss 0.3157 vs recent-average 0.3202); 50+ rushing 9.9% vs 10.0% (0.1719 vs 0.1739); 4+ receptions 22.1% vs 23.8% (0.3717 vs 0.3756).
+
+Kalshi data:
+- 2026 weeks 1–6: 18,859 settled markets (every rung), 1,189 player-games, last hourly quote at or before kickoff.
+- 2025 weeks 4–18: half the games, middle rung only, 1,932 markets. Kalshi's NFL player markets started ~week 6 of 2025: median ~600 contracts per market, average middle-rung spread 5.2¢, vs 1.3–2.3¢ in 2026.
+- Settlement matched the box score in 100% of markets.
+- Players with no box-score line are kept, with the formula computed from their history. This matters: 49 veterans priced normally at kickoff recorded no stats, and every YES on them lost. Dropping them inflated YES returns.
+
+2026 bucket returns at kickoff (all rungs):
+| Price | n | Hit | YES at ask + fee | NO at ask + fee |
+|---|---|---|---|---|
+| 0–5¢ | 2,272 | 4.0% | −21.8% | −1.5% ± 0.6% |
+| 5–10¢ | 2,905 | 8.4% | −7.7% | −2.7% |
+| 10–20¢ | 2,877 | 16.0% | −4.4% | −3.5% |
+| 30–40¢ | 1,492 | 34.6% | −7.7% | −3.1% |
+| 50–60¢ | 1,194 | 51.3% | −10.5% | +2.8% ± 3.6% |
+| 80–90¢ | 720 | 83.6% | −2.6% | −6.9% |
+
+Accuracy (log loss), Kalshi vs formula:
+- 2025 middle rungs: 0.6749 vs 0.6871 (1,343).
+- 2026 weeks 1–3 all rungs: 0.4561 vs 0.4804 (9,357).
+- 2026 weeks 4–6 all rungs: 0.4824 vs 0.4928 (7,034).
+- Kalshi is better for every stat in every period except 2026 weeks 4–6 rushing middle rungs (0.6261 vs 0.6162, n = 191).
+- Blend weight on the formula fitted on weeks 1–3 = 0.
+
+Betting disagreements, all rungs, 2026: weeks 1–3 YES −10.4%, NO −5.1%; weeks 4–6 YES +2.9%, NO +4.3%.
+
+Middle rungs (buy at ask + fee; SE clustered by player-game):
+| Rule | 2025 wk 4–18 | 2026 wk 1–3 | 2026 wk 4–6 | Pooled |
+|---|---|---|---|---|
+| NO, formula under by ≥ 3 pts | +4.0% (437) | +1.3% (361) | +10.5% (313) | +5.0% ± 2.7% (1,111) |
+| NO, formula under by > 0 | +2.5% (593) | +1.6% (527) | +6.2% (444) | +3.2% ± 2.2% (1,564) |
+| NO, formula under by ≥ 5 pts | +0.6% (348) | −1.3% (266) | +10.9% (250) | +3.0% ± 3.0% (864) |
+| YES, formula over by > 0 | −5.0% (306) | +12.2% (488) | +39.0% (326) | +15.3% ± 7.5%, fails in 2025 |
+| Blind NO on every middle rung | −0.1% (1,367) | −1.5% (1,364) | −1.2% (975) | −0.9% ± 1.4% (3,706) |
+
+Flat $20 on the ≥ 3-pt NO rule: 1,111 bets, $22,220 staked, +$1,104, max drawdown $353, longest losing streak 11.
+
+Status: the only lead positive in all three periods, but ~1.9 SE after ~40 tests and not monotonic in the threshold. Paper-trade it with research/props_scan.py (17 Oct 2026: 83 candidates for week 6 Sun/Mon).

@@ -14,6 +14,11 @@ Three reasons, all visible in the data:
 2. **The fee eats any small edge.** Kalshi's taker fee is 7% × P × (1 − P) per contract: 1.75¢ on a 50¢ contract. An edge has to be bigger than that just to break even, and real mispricings on these markets are usually 0–2¢.
 3. **The edges people talk about don't hold up from season to season.** Late-game hockey favorites, NFL underdogs and posting resting bids all looked good in one sample and reversed in the next.
 
+**One lead survived three separate periods but is not proven:** buying NO on the middle rung of a player's yards or receptions ladder when my player formula says he goes under.
+- It returned **+5.0% ± 2.7%** per dollar over 1,111 bets (2025: +4.0%, 2026 Weeks 1–3: +1.3%, Weeks 4–6: +10.5%).
+- Blind unders on the same rungs lost 0.9%.
+- That is not strong enough to fund, so I built a scanner (`research/props_scan.py`) to paper-trade it (section 6).
+
 **What does hold up is a ranking of which bets lose least.** If you are going to bet anyway (and your earlier "probability play" goal fits this), the cheapest bets were:
 - **Buying NO on a long-shot player rung** (e.g. "Player X: 100+ receiving yards", NO at about 96¢) wins about 96% of the time and lost only **−1.5% ± 0.6%** per dollar.
 - **Very heavy game favorites (90–100¢)** lost about **−0.6%**.
@@ -167,9 +172,66 @@ This was the most promising lead from the research. It reversed on the larger se
 
 ## 6. Backtest: player formula vs. Kalshi player markets
 
-*(filled in from `research/props_backtest.py`; see below)*
+**Data.**
+- **2026:** 18,859 Kalshi player markets, Weeks 1–6, every rung of every ladder (1,189 player-games).
+- **2025:** 1,932 middle-rung markets from Weeks 4–18, as an independent test season. Kalshi's NFL player markets only began around Week 6 of 2025, and they were thin: a median of about 600 contracts per market and an average spread of 5¢, versus 1–2¢ in 2026.
+- **Price used:** the last quote at or before kickoff.
+- **Players included:** players with no stats in the game (active but never touched the ball) are kept, with the formula computed from their history. Leaving them out flattered the "over" bets.
+- **Settlement check:** Kalshi's settlement matched the box score in 100% of markets.
 
-PROPS_SECTION
+**Kalshi's player prices are well calibrated, and buying YES (the over) loses at every price** (2026, all rungs, at kickoff):
+
+| Kalshi price | Markets | Actually hit | Buy YES at ask + fee | Buy NO at ask + fee |
+|---|---|---|---|---|
+| 0–5¢ | 2,272 | 4.0% | −21.8% | **−1.5% (±0.6%)** |
+| 5–10¢ | 2,905 | 8.4% | −7.7% | −2.7% |
+| 10–20¢ | 2,877 | 16.0% | −4.4% | −3.5% |
+| 20–30¢ | 1,881 | 25.5% | −6.8% | −3.6% |
+| 30–40¢ | 1,492 | 34.6% | −7.7% | −3.1% |
+| 40–50¢ | 1,297 | 44.3% | −6.9% | −2.8% |
+| 50–60¢ | 1,194 | 51.3% | −10.5% | +2.8% (±3.6%) |
+| 60–70¢ | 1,122 | 65.2% | −3.3% | −7.3% |
+| 70–80¢ | 997 | 73.6% | −5.0% | −3.5% |
+| 80–90¢ | 720 | 83.6% | −2.6% | −6.9% |
+
+**Kalshi is more accurate than my formula in every period** (log loss, lower is better):
+
+| Period | Markets | Kalshi | My formula |
+|---|---|---|---|
+| 2025, Weeks 4–18 (middle rungs) | 1,343 | 0.6749 | 0.6871 |
+| 2026, Weeks 1–3 (all rungs) | 9,357 | 0.4561 | 0.4804 |
+| 2026, Weeks 4–6 (all rungs) | 7,034 | 0.4824 | 0.4928 |
+
+That holds for receiving yards, rushing yards and receptions separately. The gap narrows as the season goes on, as the formula gets more current-season data. Kalshi's market makers also see injury and depth-chart news that the formula doesn't.
+
+**Betting the formula's disagreements on all rungs:**
+- 2026 Weeks 1–3: YES −10.4%, NO −5.1%.
+- 2026 Weeks 4–6: YES +2.9%, NO +4.3%.
+- Not a strategy.
+
+**The one lead left: NO on the middle rung when the formula says the player goes under.** Every ladder has a middle rung (e.g. a receiver's 60+ in a 30/45/60/75/90 ladder). Buying NO there when the formula's chance of the under beats the NO ask plus the fee:
+
+| Rule (middle rung, buy NO at ask + fee) | 2025 Wk 4–18 | 2026 Wk 1–3 | 2026 Wk 4–6 | All three |
+|---|---|---|---|---|
+| Formula under by ≥ 3 points | +4.0% (437) | +1.3% (361) | +10.5% (313) | **+5.0% ± 2.7%** (1,111) |
+| Formula under by any amount | +2.5% (593) | +1.6% (527) | +6.2% (444) | +3.2% ± 2.2% (1,564) |
+| Formula under by ≥ 5 points | +0.6% (348) | −1.3% (266) | +10.9% (250) | +3.0% ± 3.0% (864) |
+| Control: blind NO on every middle rung | −0.1% (1,367) | −1.5% (1,364) | −1.2% (975) | −0.9% ± 1.4% (3,706) |
+| (YES when the formula says over) | −5.0% (306) | +12.2% (488) | +39.0% (326) | fails in 2025 |
+
+At $20 a bet, the ≥ 3-point rule would have made **+$1,104 on $22,220 staked**, with a worst drawdown of $353 and a longest losing streak of 11.
+
+**Why I still don't call it proven:**
+- It is about 1.9 standard errors from zero, and I tested about 40 rule-by-sport cells. One or two cells this strong are expected by luck alone.
+- The edge doesn't grow at a stricter threshold (≥ 5 points), which a real edge usually does.
+- Much of it comes from 2026 Weeks 4–6.
+
+What makes it worth watching:
+- It is positive in all three periods, including the 2025 season it never saw.
+- Blind unders on the same rungs lose, so the formula is adding something beyond "bet the under."
+- In thin 2025 markets, overs on middle rungs were overpriced: they hit 41.8% against a 45.4% average price.
+
+**Next step: paper-trade it** with `python research/props_scan.py`. On 17 Oct it listed 83 candidates for the Week 6 Sunday and Monday games.
 
 ---
 
@@ -184,6 +246,10 @@ PROPS_SECTION
 4. **Use limit orders, not market orders,** but don't expect a resting bid to be free money. It saves the spread on fills, and the fills skew toward bad news.
 5. **Check against the sportsbook line before you buy.** If Kalshi is more expensive than the de-vigged sportsbook price, don't buy. This avoids paying extra; it doesn't create an edge.
 6. **Don't chase a hot rule.** Every rule that looked good in one season here flipped in the next. Anything you want to try, paper-trade it for a season first. The scripts in `research/` make that easy.
+7. **The one rule worth paper-trading:** run `python research/props_scan.py` before each slate. It lists middle-rung player markets where the formula's under beats Kalshi's NO price by 3+ points.
+   - Check the injury report first; the formula doesn't know who is out.
+   - Log the picks, record the results, and compare against the +5% backtest after 100+ bets.
+   - Only if it is still clearly positive then should real money follow, at small flat stakes.
 
 ---
 

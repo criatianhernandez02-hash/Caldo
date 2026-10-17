@@ -41,6 +41,7 @@ FIT_SEASONS = range(2018, 2024)
 PRIOR = {"ypt": {"WR": 8.2, "TE": 7.2, "RB": 5.8, "QB": 5.0}, "ypc": {"WR": 6.5, "TE": 4.0, "RB": 4.3, "QB": 5.0},
          "catch": {"WR": 0.63, "TE": 0.70, "RB": 0.76, "QB": 0.5}}
 K_T, K_C = 25.0, 40.0
+EW_COLS = ["targets", "receptions", "receiving_yards", "carries", "rushing_yards", "team_targets", "team_carries"]
 STATS = {
     # target column, positions modelled, feature list
     "receiving_yards": (("WR", "TE", "RB"), ["l_tgt", "l_ypt", "l_tshare", "l_tm_tgt", "l_implied", "spread7",
@@ -124,15 +125,20 @@ def build() -> pd.DataFrame:
                 on=["game_id", "opponent_team", "pg"], how="left")
     s = s.sort_values(["season", "week"]).reset_index(drop=True)
 
-    pf = ew_features(s, "player_id", ["targets", "receptions", "receiving_yards", "carries", "rushing_yards",
-                                      "team_targets", "team_carries"])
+    pf = ew_features(s, "player_id", EW_COLS)
     s = pd.concat([s, pf], axis=1)
+    s = s.merge(game_context(), on=["game_id", "team"], how="left")
+    s["name_key"] = s["player_display_name"].map(norm_name)
+    return derive(s)
+
+
+def derive(s: pd.DataFrame) -> pd.DataFrame:
+    """Model features from the pre-game weighted sums, the team's context and the opponent."""
     n = s["ew_n"].replace(0, np.nan)
     pos = s["position"].where(s["position"].isin(["WR", "TE", "RB", "QB"]), "WR")
     s["ypt"] = (s["ew_receiving_yards"] + K_T * pos.map(PRIOR["ypt"])) / (s["ew_targets"] + K_T)
     s["ypc"] = (s["ew_rushing_yards"] + K_C * pos.map(PRIOR["ypc"])) / (s["ew_carries"] + K_C)
     s["catch"] = (s["ew_receptions"] + K_T * pos.map(PRIOR["catch"])) / (s["ew_targets"] + K_T)
-    s = s.merge(game_context(), on=["game_id", "team"], how="left")
     feats = {
         "l_tgt": np.log(s["ew_targets"] / n + 0.25), "l_car": np.log(s["ew_carries"] / n + 0.25),
         "l_rec": np.log(s["ew_receptions"] / n + 0.25),
@@ -147,9 +153,57 @@ def build() -> pd.DataFrame:
         "is_TE": (s["position"] == "TE").astype(float), "is_RB": (s["position"] == "RB").astype(float),
         "is_QB": (s["position"] == "QB").astype(float), "is_WR": (s["position"] == "WR").astype(float),
     }
-    s = pd.concat([s, pd.DataFrame(feats)], axis=1)
-    s["name_key"] = s["player_display_name"].map(norm_name)
-    return s
+    return pd.concat([s, pd.DataFrame(feats, index=s.index)], axis=1)
+
+
+def pregame_absent(s: pd.DataFrame, want: pd.DataFrame) -> pd.DataFrame:
+    """Features for (game_id, name_key) pairs with no box-score row - a player who was active but
+    recorded nothing, or a late scratch: his last post-game state carried forward one game.
+    Only players still on one of the two teams are returned."""
+    d = 0.5 ** (1.0 / HL)
+    g = pd.read_csv(CACHE / "games.csv").set_index("game_id")
+    by_name = {k: v for k, v in s.groupby("name_key")}
+    team_ctx = s.drop_duplicates(["game_id", "team"]).set_index(["game_id", "team"])[["tm_tgt_pg", "tm_car_pg"]]
+    opp_ctx = s.drop_duplicates(["game_id", "team", "pg"]).set_index(["game_id", "team", "pg"])[["opp_rec", "opp_rush"]]
+    # games not played yet have no rows: fall back to each team's / defence's latest values
+    team_last = s.groupby("team")[["tm_tgt_pg", "tm_car_pg"]].last()
+    opp_last = s.groupby(["opponent_team", "pg"])[["opp_rec", "opp_rush"]].last()
+    rows = []
+    for r in want.drop_duplicates(["game_id", "name_key"]).itertuples():
+        if r.game_id not in g.index or r.name_key not in by_name:
+            continue
+        gs, gw = int(g.at[r.game_id, "season"]), int(g.at[r.game_id, "week"])
+        prior = by_name[r.name_key]
+        prior = prior[prior["season"] * 100 + prior["week"] < gs * 100 + gw]
+        teams = (g.at[r.game_id, "home_team"], g.at[r.game_id, "away_team"])
+        if prior.empty or prior.iloc[-1]["team"] not in teams:
+            continue
+        last = prior.iloc[-1]
+        f = d * (CARRY if gs != last["season"] else 1.0)
+        row = {"game_id": r.game_id, "name_key": r.name_key, "player_display_name": last["player_display_name"],
+               "position": last["position"], "season": gs, "week": gw, "team": last["team"],
+               "opponent_team": teams[1] if last["team"] == teams[0] else teams[0], "pg": last["pg"],
+               "ew_n": (last["ew_n"] + 1) * f}
+        for c in EW_COLS:
+            row[f"ew_{c}"] = (last[f"ew_{c}"] + last[c]) * f
+        if (r.game_id, last["team"]) in team_ctx.index:
+            tc = team_ctx.loc[(r.game_id, last["team"])]
+        else:
+            tc = team_last.loc[last["team"]]
+        row["tm_tgt_pg"], row["tm_car_pg"] = tc["tm_tgt_pg"], tc["tm_car_pg"]
+        key = (r.game_id, last["team"], last["pg"])
+        if key in opp_ctx.index:
+            row["opp_rec"], row["opp_rush"] = opp_ctx.loc[key, "opp_rec"], opp_ctx.loc[key, "opp_rush"]
+        elif (row["opponent_team"], last["pg"]) in opp_last.index:
+            oc = opp_last.loc[(row["opponent_team"], last["pg"])]
+            row["opp_rec"], row["opp_rush"] = oc["opp_rec"], oc["opp_rush"]
+        else:
+            row["opp_rec"], row["opp_rush"] = np.nan, np.nan
+        rows.append(row)
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).merge(game_context(), on=["game_id", "team"], how="left")
+    return derive(out)
 
 
 class StatModel:
