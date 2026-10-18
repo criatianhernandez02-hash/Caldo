@@ -258,7 +258,9 @@ What makes it worth watching:
 5. **Check against the sportsbook line before you buy.** If Kalshi is more expensive than the de-vigged sportsbook price, don't buy. This avoids paying extra; it doesn't create an edge.
 6. **Don't chase a hot rule.** Every rule that looked good in one season here flipped in the next. Anything you want to try, paper-trade it for a season first. The scripts in `research/` make that easy.
 7. **The one rule worth paper-trading:** run `python research/props_scan.py` before each slate. It lists middle-rung player markets where the formula's under beats Kalshi's NO price by 3+ points.
-   - Check the injury report first; the formula doesn't know who is out.
+   - The scanner flags picks where the player is listed, a same-position teammate or the starting QB is out or questionable, or the player missed recent games.
+   - Those are role changes Kalshi has priced and the formula can't see; log them separately and treat the unflagged picks as the real test.
+   - Inactives come out 90 minutes before kickoff, so re-run close to game time.
    - Log the picks, record the results, and compare against the +5% backtest after 100+ bets.
    - Only if it is still clearly positive then should real money follow, at small flat stakes.
 

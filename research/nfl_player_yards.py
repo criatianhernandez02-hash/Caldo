@@ -163,6 +163,7 @@ def pregame_absent(s: pd.DataFrame, want: pd.DataFrame) -> pd.DataFrame:
     d = 0.5 ** (1.0 / HL)
     g = pd.read_csv(CACHE / "games.csv").set_index("game_id")
     by_name = {k: v for k, v in s.groupby("name_key")}
+    team_weeks = s.groupby(["team", "season"])["week"].unique()
     team_ctx = s.drop_duplicates(["game_id", "team"]).set_index(["game_id", "team"])[["tm_tgt_pg", "tm_car_pg"]]
     opp_ctx = s.drop_duplicates(["game_id", "team", "pg"]).set_index(["game_id", "team", "pg"])[["opp_rec", "opp_rush"]]
     # games not played yet have no rows: fall back to each team's / defence's latest values
@@ -184,6 +185,10 @@ def pregame_absent(s: pd.DataFrame, want: pd.DataFrame) -> pd.DataFrame:
                "position": last["position"], "season": gs, "week": gw, "team": last["team"],
                "opponent_team": teams[1] if last["team"] == teams[0] else teams[0], "pg": last["pg"],
                "ew_n": (last["ew_n"] + 1) * f}
+        # team games this season since his last appearance (injury, benching, or a new season)
+        weeks = team_weeks.get((last["team"], gs), [])
+        since = last["week"] if last["season"] == gs else 0
+        row["games_missed"] = int(sum(1 for w in weeks if since < w < gw))
         for c in EW_COLS:
             row[f"ew_{c}"] = (last[f"ew_{c}"] + last[c]) * f
         if (r.game_id, last["team"]) in team_ctx.index:
