@@ -78,10 +78,31 @@ def regular_qb_flags(g: pd.DataFrame) -> pd.DataFrame:
                 flags[(r.idx, r.side)] = 0
             if pd.notna(r.qb):
                 hist.append(r.qb)
+    # games not played yet: nflverse lists a projected starter, which can be an injured one
+    gone = unavailable_qbs(g)
+    for i, r in g[g["home_score"].isna()].iterrows():
+        for side in ("home", "away"):
+            if (r["season"], r["week"], r[f"{side}_qb_id"]) in gone:
+                flags[(i, side)] = 1
     out = g.copy()
     out["backup_home"] = [flags[(i, "home")] for i in g.index]
     out["backup_away"] = [flags[(i, "away")] for i in g.index]
     return out
+
+
+def unavailable_qbs(g: pd.DataFrame) -> set:
+    """(season, week, gsis_id) of players not available that week: anything but ACT on nflverse's
+    weekly roster (IR, inactive, cut) or Out/Doubtful on its injury report."""
+    gone = set()
+    for season in g.loc[g["home_score"].isna(), "season"].unique():
+        ros, inj = DEFAULT_CACHE / f"roster_weekly_{season}.csv", DEFAULT_CACHE / f"injuries_{season}.csv"
+        if ros.exists():
+            r = pd.read_csv(ros, usecols=["season", "week", "gsis_id", "status"], low_memory=False)
+            gone |= set(map(tuple, r.loc[r["status"] != "ACT", ["season", "week", "gsis_id"]].to_numpy()))
+        if inj.exists():
+            j = pd.read_csv(inj, usecols=["season", "week", "gsis_id", "report_status"], low_memory=False)
+            gone |= set(map(tuple, j.loc[j["report_status"].isin(["Out", "Doubtful"]), ["season", "week", "gsis_id"]].to_numpy()))
+    return gone
 
 
 def run(g: pd.DataFrame, p: Params) -> np.ndarray:

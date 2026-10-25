@@ -15,6 +15,12 @@ So for each player and game:
              (25 targets / 40 carries / 25 targets of prior)
   environment team implied points = total/2 +- spread/2, and the team's spread
   opponent   yards allowed to the position, relative to league average (shrunk, 4 games prior)
+  who plays  the share of the team's recent targets / carries held by regulars who are not playing
+             (vacated - their volume has to go to someone), both team-wide and within his own
+             position group, and whether the starting QB is a backup. Past games: not "ACT" on
+             nflverse's weekly roster (inactive, IR, cut, traded) - known at kickoff. Upcoming
+             games: Out/Doubtful on the injury report or not active on the latest roster
+             (pregame_absent's `out` argument).
 mean = exp(linear formula of the logs), fitted by Poisson regression; then
 P(stat > strike) = share of past player-games with the same predicted-mean band whose
 actual/predicted ratio was above strike/mean (an empirical distribution, fitted on the same years).
@@ -41,15 +47,16 @@ FIT_SEASONS = range(2018, 2024)
 PRIOR = {"ypt": {"WR": 8.2, "TE": 7.2, "RB": 5.8, "QB": 5.0}, "ypc": {"WR": 6.5, "TE": 4.0, "RB": 4.3, "QB": 5.0},
          "catch": {"WR": 0.63, "TE": 0.70, "RB": 0.76, "QB": 0.5}}
 K_T, K_C = 25.0, 40.0
+LOOKBACK = 2  # a "regular" played in one of the team's last 2 games this season
 EW_COLS = ["targets", "receptions", "receiving_yards", "carries", "rushing_yards", "team_targets", "team_carries"]
 STATS = {
     # target column, positions modelled, feature list
     "receiving_yards": (("WR", "TE", "RB"), ["l_tgt", "l_ypt", "l_tshare", "l_tm_tgt", "l_implied", "spread7",
-                                             "l_opp_rec", "l_recyd", "l_n", "is_TE", "is_RB"]),
+                                             "l_opp_rec", "l_recyd", "l_n", "is_TE", "is_RB", "l_vac_t", "l_gvac_t", "l_gret_t", "backup_qb"]),
     "rushing_yards": (("RB", "QB", "WR"), ["l_car", "l_ypc", "l_cshare", "l_tm_car", "l_implied", "spread7",
-                                           "l_opp_rush", "l_rushyd", "l_n", "is_QB", "is_WR"]),
+                                           "l_opp_rush", "l_rushyd", "l_n", "is_QB", "is_WR", "l_vac_c", "l_gvac_c", "l_gret_c", "backup_qb"]),
     "receptions": (("WR", "TE", "RB"), ["l_tgt", "l_catch", "l_tshare", "l_tm_tgt", "l_implied", "spread7",
-                                        "l_opp_rec", "l_rec", "l_n", "is_TE", "is_RB"]),
+                                        "l_opp_rec", "l_rec", "l_n", "is_TE", "is_RB", "l_vac_t", "l_gvac_t", "l_gret_t", "backup_qb"]),
 }
 
 
@@ -61,11 +68,11 @@ def norm_name(s: str) -> str:
 
 def load_stats() -> pd.DataFrame:
     cols = ["player_id", "player_display_name", "position", "season", "week", "season_type", "game_id", "team",
-            "opponent_team", "targets", "receptions", "receiving_yards", "carries", "rushing_yards"]
+            "opponent_team", "attempts", "targets", "receptions", "receiving_yards", "carries", "rushing_yards"]
     s = pd.concat([pd.read_csv(CACHE / f"stats_player_week_{y}.csv", usecols=cols, low_memory=False)
                    for y in SEASONS if (CACHE / f"stats_player_week_{y}.csv").exists()], ignore_index=True)
     s = s[s["season_type"].isin(["REG", "POST"])].copy()
-    for c in ("targets", "receptions", "receiving_yards", "carries", "rushing_yards"):
+    for c in ("attempts", "targets", "receptions", "receiving_yards", "carries", "rushing_yards"):
         s[c] = s[c].fillna(0.0)
     return s.sort_values(["season", "week"]).reset_index(drop=True)
 
@@ -101,6 +108,96 @@ def game_context() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_rosters() -> pd.DataFrame:
+    """nflverse weekly rosters: one row per player-team-week with status (ACT, INA, RES, CUT, ...)."""
+    cols = ["season", "week", "team", "gsis_id", "full_name", "status"]
+    return pd.concat([pd.read_csv(CACHE / f"roster_weekly_{y}.csv", usecols=cols, low_memory=False)
+                      for y in SEASONS if (CACHE / f"roster_weekly_{y}.csv").exists()], ignore_index=True)
+
+
+def absences(s: pd.DataFrame, rosters: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per team-game: the share of the team's targets and carries held by recent regulars who are
+    not active for this game (vac_t, vac_c; plus per position group), and whether the starting QB
+    (most pass attempts) is not the team's usual starter over its previous 8 games (backup_qb).
+    "Active" = ACT on the weekly roster (game-day inactives, IR and departures are not); weeks
+    without roster data fall back to appearing in the box score."""
+    tg = s[["game_id", "team", "season", "week"]].drop_duplicates().sort_values(["season", "week"])
+    played = s.groupby(["game_id", "team"])["player_id"].agg(set).to_dict()
+    active = {}
+    if rosters is not None and len(rosters):
+        act = rosters[rosters["status"] == "ACT"]
+        active = act.groupby(["season", "week", "team"])["gsis_id"].agg(set).to_dict()
+    present = {(r.game_id, r.team): played.get((r.game_id, r.team), set()) | active.get((r.season, r.week, r.team), set())
+               if (r.season, r.week, r.team) in active else played.get((r.game_id, r.team), set())
+               for r in tg.itertuples()}
+    post = dict(zip(zip(s["game_id"], s["player_id"]), zip(s["post_tshare"].fillna(0), s["post_cshare"].fillna(0))))
+    qbs = s[(s["position"] == "QB") & (s["attempts"] > 0)]
+    starter = qbs.loc[qbs.groupby(["game_id", "team"])["attempts"].idxmax()].set_index(["game_id", "team"])["player_id"].to_dict()
+    pg = dict(zip(zip(s["game_id"], s["player_id"]), s["pg"]))
+    hist: dict[str, list] = {}
+    season_seen: dict = {}  # (team, season) -> {player: last game played}
+    rows = []
+    for r in tg.itertuples():
+        prev = hist.setdefault(r.team, [])
+        seen = season_seen.setdefault((r.team, r.season), {})
+        last_seen = {}
+        for season, g in prev[-LOOKBACK:]:
+            if season == r.season:
+                for p in played.get((g, r.team), ()):
+                    last_seen[p] = g
+        here = present.get((r.game_id, r.team), set())
+        back = [(post[(g, p)], pg[(g, p)]) for p, g in seen.items() if p not in last_seen and p in here]
+        before = [starter[(g, r.team)] for _, g in prev[-8:] if (g, r.team) in starter]
+        st = starter.get((r.game_id, r.team))
+        backup = float(bool(st and before) and st != max(set(before), key=before.count))
+        rows.append({"game_id": r.game_id, "team": r.team, "backup_qb": backup,
+                     **share_gone([(post[(g, p)], pg[(g, p)], p not in here) for p, g in last_seen.items()], back)})
+        prev.append((r.season, r.game_id))
+        for p in played.get((r.game_id, r.team), ()):
+            seen[p] = r.game_id
+    return pd.DataFrame(rows)
+
+
+def share_gone(regulars: list, back: list = ()) -> dict:
+    """regulars: [((target share, carry share), position group, absent?)] -> team vacated shares
+    (vac_t, vac_c) and, per position group, the group's total share and the absent part of it.
+    back: [((target share, carry share), position group)] for players returning this game after
+    missing the team's last games - their volume comes back out of the regulars' shares."""
+    out = {"vac_t": 0.0, "vac_c": 0.0}
+    for (t, c), g, gone in regulars:
+        for k, v in (("t", t), ("c", c)):
+            out[f"grp_{k}_{g}"] = out.get(f"grp_{k}_{g}", 0.0) + v
+            if gone:
+                out[f"vac_{k}"] += v
+                out[f"gvac_{k}_{g}"] = out.get(f"gvac_{k}_{g}", 0.0) + v
+    for (t, c), g in back:
+        for k, v in (("t", t), ("c", c)):
+            out[f"gret_{k}_{g}"] = out.get(f"gret_{k}_{g}", 0.0) + v
+    out["vac_t"], out["vac_c"] = min(out["vac_t"], 0.85), min(out["vac_c"], 0.85)
+    return out
+
+
+def group_lift(s: pd.DataFrame) -> pd.DataFrame:
+    """Each player's position group: how much its present members' share should scale up, log(G / (G - vacated))."""
+    for k in ("t", "c"):
+        tot = np.zeros(len(s)); gone = np.zeros(len(s))
+        for g in ("WR", "TE", "RB", "QB", "OTHER"):
+            m = (s["pg"] == g).to_numpy()
+            if f"grp_{k}_{g}" in s:
+                tot[m] = s.loc[m, f"grp_{k}_{g}"].fillna(0).to_numpy()
+            if f"gvac_{k}_{g}" in s:
+                gone[m] = s.loc[m, f"gvac_{k}_{g}"].fillna(0).to_numpy()
+        back = np.zeros(len(s))
+        for g in ("WR", "TE", "RB", "QB", "OTHER"):
+            m = (s["pg"] == g).to_numpy()
+            if f"gret_{k}_{g}" in s:
+                back[m] = s.loc[m, f"gret_{k}_{g}"].fillna(0).to_numpy()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            s[f"l_gvac_{k}"] = np.where(tot > 0, np.log(tot / np.maximum(tot - gone, 0.15 * tot)), 0.0)
+            s[f"l_gret_{k}"] = np.where(tot > 0, np.log((tot + back) / np.maximum(tot, 0.05)), 0.0)
+    return s
+
+
 def build() -> pd.DataFrame:
     s = load_stats()
     team = s.groupby(["game_id", "team", "season", "week"], as_index=False)[["targets", "carries"]].sum()
@@ -127,6 +224,9 @@ def build() -> pd.DataFrame:
 
     pf = ew_features(s, "player_id", EW_COLS)
     s = pd.concat([s, pf], axis=1)
+    s["post_tshare"] = (s["ew_targets"] + s["targets"]) / (s["ew_team_targets"] + s["team_targets"]).replace(0, np.nan)
+    s["post_cshare"] = (s["ew_carries"] + s["carries"]) / (s["ew_team_carries"] + s["team_carries"]).replace(0, np.nan)
+    s = s.merge(absences(s, load_rosters()), on=["game_id", "team"], how="left")
     s = s.merge(game_context(), on=["game_id", "team"], how="left")
     s["name_key"] = s["player_display_name"].map(norm_name)
     return derive(s)
@@ -152,14 +252,43 @@ def derive(s: pd.DataFrame) -> pd.DataFrame:
         "l_n": np.log(s["ew_n"] + 1),
         "is_TE": (s["position"] == "TE").astype(float), "is_RB": (s["position"] == "RB").astype(float),
         "is_QB": (s["position"] == "QB").astype(float), "is_WR": (s["position"] == "WR").astype(float),
+        "l_vac_t": -np.log(1 - s["vac_t"].fillna(0)), "l_vac_c": -np.log(1 - s["vac_c"].fillna(0)),
     }
+    s["backup_qb"] = s["backup_qb"].fillna(0.0)
+    s = group_lift(s)
     return pd.concat([s, pd.DataFrame(feats, index=s.index)], axis=1)
 
 
-def pregame_absent(s: pd.DataFrame, want: pd.DataFrame) -> pd.DataFrame:
+def live_absences(s: pd.DataFrame, team: str, season: int, week: int, out_keys: set[str]) -> dict:
+    """Absence features for a game not played yet: regulars from the team's last games this season
+    whose name is in out_keys (Out/Doubtful/not active) are vacated; players from earlier this
+    season who are not in out_keys are returning; backup_qb when the usual starting QB is out or
+    has not started the team's latest game."""
+    t = s[(s["team"] == team) & (s["season"] == season) & (s["week"] < week)]
+    games = t.drop_duplicates("game_id").sort_values("week")["game_id"].tolist()
+    recent = t[t["game_id"].isin(games[-LOOKBACK:])].sort_values("week").drop_duplicates("player_id", keep="last")
+    regulars = [((t, c), g, k in out_keys) for t, c, g, k in
+                zip(recent["post_tshare"].fillna(0), recent["post_cshare"].fillna(0), recent["pg"], recent["name_key"])]
+    earlier = t[~t["player_id"].isin(recent["player_id"])].sort_values("week").drop_duplicates("player_id", keep="last")
+    earlier = earlier[~earlier["name_key"].isin(out_keys)]
+    back = [((tt, c), g) for tt, c, g in zip(earlier["post_tshare"].fillna(0), earlier["post_cshare"].fillna(0), earlier["pg"])]
+    qbs = s[(s["team"] == team) & (s["position"] == "QB") & (s["attempts"] > 0) & (s["season"] * 100 + s["week"] < season * 100 + week)]
+    starts = qbs.loc[qbs.groupby("game_id")["attempts"].idxmax()].sort_values(["season", "week"]).tail(8)
+    backup = 0.0
+    if len(starts):
+        modal = starts["name_key"].mode().iloc[0]
+        backup = float(modal in out_keys or starts["name_key"].iloc[-1] != modal)
+    return {**share_gone(regulars, back), "backup_qb": backup}
+
+
+def pregame_absent(s: pd.DataFrame, want: pd.DataFrame, out: dict | None = None) -> pd.DataFrame:
     """Features for (game_id, name_key) pairs with no box-score row - a player who was active but
-    recorded nothing, or a late scratch: his last post-game state carried forward one game.
-    Only players still on one of the two teams are returned."""
+    recorded nothing, a late scratch, or a game not played yet: his last post-game state carried
+    forward one game. Only players still on one of the two teams are returned. For games not
+    played yet, `out` maps (week, team) to the name keys listed Out/Doubtful that week."""
+    acols = [c for c in s.columns if c.startswith(("vac_", "grp_", "gvac_", "gret_"))] + ["backup_qb"]
+    absent_ctx = s.drop_duplicates(["game_id", "team"]).set_index(["game_id", "team"])[acols]
+    live_cache: dict = {}
     d = 0.5 ** (1.0 / HL)
     g = pd.read_csv(CACHE / "games.csv").set_index("game_id")
     by_name = {k: v for k, v in s.groupby("name_key")}
@@ -196,6 +325,13 @@ def pregame_absent(s: pd.DataFrame, want: pd.DataFrame) -> pd.DataFrame:
         else:
             tc = team_last.loc[last["team"]]
         row["tm_tgt_pg"], row["tm_car_pg"] = tc["tm_tgt_pg"], tc["tm_car_pg"]
+        if (r.game_id, last["team"]) in absent_ctx.index:
+            row.update(absent_ctx.loc[(r.game_id, last["team"])].to_dict())
+        else:
+            ck = (gs, gw, last["team"])
+            if ck not in live_cache:
+                live_cache[ck] = live_absences(s, last["team"], gs, gw, (out or {}).get((gw, last["team"]), set()))
+            row.update(live_cache[ck])
         key = (r.game_id, last["team"], last["pg"])
         if key in opp_ctx.index:
             row["opp_rec"], row["opp_rush"] = opp_ctx.loc[key, "opp_rec"], opp_ctx.loc[key, "opp_rush"]

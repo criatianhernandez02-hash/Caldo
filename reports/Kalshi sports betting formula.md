@@ -244,6 +244,39 @@ What makes it worth watching:
 
 **Next step: paper-trade it** with `python research/props_scan.py`. On 17 Oct it listed 83 candidates for the Week 6 Sunday and Monday games.
 
+### 6b. Model fix (25 Oct): teaching the formula who is playing
+
+**The problem.** Most big disagreements with Kalshi came from injuries. The formula only knew each player's past usage, so it missed when a starter was out and his backup was taking over.
+
+**The fix.** For every game, the formula now gets:
+- **Vacated volume:** the share of the team's recent targets and carries held by regulars who are not active, both team-wide and within the player's own position group.
+  - In past games, "not active" means not listed as active on nflverse's weekly roster.
+  - For upcoming games, it means Out/Doubtful on the injury report, or not active on the roster.
+- **Returning starters:** volume coming back from a player who missed recent games, which trims the backups' shares.
+- **Backup QB flag:** whether the usual starting QB is out.
+- **Fresh data:** the live scan re-downloads stats, rosters and the schedule before every run.
+
+Separately, the team-win formula now treats a projected starter who is on IR or ruled out as a backup start (the Jalen Hurts case).
+
+**What it changed.** Same data, same tests, log loss (lower is better):
+
+| Period | Kalshi | Formula before | Formula after |
+|---|---|---|---|
+| 2025 Weeks 4–18 (middle rungs) | 0.6749 | 0.6871 | 0.6843 |
+| 2026 Weeks 1–3 (all rungs) | 0.4561 | 0.4804 | 0.4778 |
+| 2026 Weeks 4–6 (all rungs) | 0.4824 | 0.4928 | 0.4897 |
+
+- **Closer to Kalshi, still behind it:** the gap shrank by about 10–30% in each period.
+- **Fewer big disagreements:** lines where the formula and Kalshi differ by 20+ points fell from 913 to 767 in the backtest.
+- **On the 25 Oct slate:** they fell from 110 to 76, and the injury-replacement cases dropped out.
+- **What remains:** mostly players stepping into a new role with little history in it. In those cases Kalshi is still the better guide.
+
+**The paper-trade rule after the fix** (NO on a middle rung, formula under by 3–10 points):
+- **Result:** +5.5% ± 3.0% over 715 bets.
+- **By period:** 2025 +5.9%, 2026 Weeks 1–3 +4.5%, Weeks 4–6 +6.1%.
+- **Across versions:** it was positive in every period for every model version (+5.5% to +6.6%).
+- **Status:** still not proven, but it held up through the change.
+
 ---
 
 ## 7. The playbook (if you bet anyway)

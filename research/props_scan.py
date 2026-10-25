@@ -13,11 +13,12 @@ blind NO on the same rungs lost 0.9%. That is about 1.9 standard errors after ~4
 edge does not grow at a 5-point threshold, so it is NOT proven: log the picks and check them
 before putting money on it.
 
-The formula only knows each player's own past usage. Each pick is checked against nflverse's
-injury report for the game's week and flagged when the player is listed, a teammate at the same
-position (or the starting QB) is Out/Doubtful, or the player missed his team's last game(s);
-those are role changes the market has priced and the formula has not. Unflagged picks are the
-cleanest paper trades. Writes research/out/props_scan_<date>.csv.
+Before scoring, the scan re-downloads this season's stats, weekly rosters and schedule, and
+tells the formula who is out (Out/Doubtful on nflverse's injury report, or not active on the
+roster), so the volume of missing teammates is shifted to the players left. Picks are still
+flagged when the player is listed, a same-position teammate or the starting QB is out or
+questionable, or the player missed recent games: those are the formula's least-tested cases.
+Unflagged picks are the cleanest paper trades. Writes research/out/props_scan_<date>.csv.
 """
 
 from __future__ import annotations
@@ -41,6 +42,11 @@ from research.nfl_player_yards import build, fit_all, norm_name, pregame_absent 
 OUT = Path(__file__).resolve().parent / "out"
 STAT = {"KXNFLRECYDS": "receiving_yards", "KXNFLRSHYDS": "rushing_yards", "KXNFLREC": "receptions"}
 INJURIES_URL = "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_{season}.csv"
+LIVE_FILES = {  # refreshed on every scan so the formula sees last week's games and this week's news
+    "stats_player_week_{season}.csv": "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{season}.csv",
+    "roster_weekly_{season}.csv": "https://github.com/nflverse/nflverse-data/releases/download/weekly_rosters/roster_weekly_{season}.csv",
+    "games.csv": "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",
+}
 
 
 def open_markets(series: str) -> list[dict]:
@@ -57,6 +63,33 @@ def open_markets(series: str) -> list[dict]:
         if not cursor:
             return out
         time.sleep(0.5)
+
+
+def refresh(season: int) -> None:
+    """Re-download this season's stats, rosters and the schedule (keeps the cached copy on failure)."""
+    for name, url in LIVE_FILES.items():
+        path = ROOT / "data_cache" / name.format(season=season)
+        try:
+            r = requests.get(url.format(season=season), timeout=120)
+            r.raise_for_status()
+            if len(r.content) > 10_000:
+                path.write_bytes(r.content)
+        except requests.RequestException as e:
+            print(f"(could not refresh {path.name}: {e}; using the cached copy)")
+
+
+def ruled_out(season: int, inj: pd.DataFrame) -> dict:
+    """(week, team) -> name keys not available: Out/Doubtful on the injury report, or anything but
+    ACT on the weekly roster (game-day inactives once posted, IR, cut, traded)."""
+    out: dict = {}
+    for r in inj[inj["report_status"].isin(["Out", "Doubtful"])].itertuples():
+        out.setdefault((int(r.week), r.team), set()).add(r.name_key)
+    path = ROOT / "data_cache" / f"roster_weekly_{season}.csv"
+    if path.exists():
+        ros = pd.read_csv(path, usecols=["week", "team", "full_name", "status"], low_memory=False)
+        for r in ros[ros["status"] != "ACT"].itertuples():
+            out.setdefault((int(r.week), r.team), set()).add(norm_name(r.full_name))
+    return out
 
 
 def injuries(season: int) -> pd.DataFrame:
@@ -130,9 +163,11 @@ def scan(edge: float = 0.03, stake: float = 20.0) -> pd.DataFrame:
     df = df[df.groupby("ladder").cumcount() == (df.groupby("ladder")["strike"].transform("size") - 1) // 2]
     df["name_key"] = df["name"].map(norm_name)
 
+    season = int(df["game_id"].str[:4].iloc[0])
+    refresh(season)
     s = build()
     models = fit_all(s)
-    feats = pregame_absent(s, df[["game_id", "name_key"]])
+    feats = pregame_absent(s, df[["game_id", "name_key"]], out=ruled_out(season, injuries(season)))
     out = []
     for stat, m in models.items():
         part = df[df["stat"] == stat].merge(feats.loc[m.usable(feats), ["game_id", "name_key", "position", "team", "games_missed"] + m.features],
@@ -172,7 +207,8 @@ def main(argv: list[str]) -> None:
     print(f"== No injury news ({len(clean)}): the cleanest paper trades ==")
     print(clean[cols].round(3).to_string(index=False) if len(clean) else "(none)")
     flagged = show[show["news"] != ""]
-    print(f"\n== Flagged ({len(flagged)}): role or QB change the formula can't see - log separately ==")
+    print(f"\n== Flagged ({len(flagged)}): role or QB change - the formula now adjusts for who is out, "
+          "but these are its least-tested cases; log separately ==")
     print(flagged[cols[:3] + ["edge", "news"]].round(3).to_string(index=False) if len(flagged) else "(none)")
     OUT.mkdir(exist_ok=True)
     path = OUT / f"props_scan_{dt.date.today().isoformat()}.csv"
