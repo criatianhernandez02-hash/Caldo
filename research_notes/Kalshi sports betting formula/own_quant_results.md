@@ -196,3 +196,39 @@ Middle rungs (buy at ask + fee; SE clustered by player-game):
 Flat $20 on the ≥ 3-pt NO rule: 1,111 bets, $22,220 staked, +$1,104, max drawdown $353, longest losing streak 11.
 
 Status: the only lead positive in all three periods, but ~1.9 SE after ~40 tests and not monotonic in the threshold. Paper-trade it with research/props_scan.py (17 Oct 2026: 83 candidates for week 6 Sun/Mon).
+
+
+## J. Unabated's rules applied (26 Oct): CLV, timing, injury news
+
+**CLV on the paper log** (120 picks, Weeks 6–7, entry 1–3 days before kickoff):
+- Record 91–29, +$124.50 on $2,350 (+5.3%).
+- Mid-to-mid price move toward our side: −0.27¢ ± 0.24. Half-spread paid at entry: 1.35¢.
+- Moved our way 42% of the time, against us 44%.
+
+**Timing** (25,025 markets in 2026, 1,543 player-games; 8,646 markets quoted at every horizon):
+- Kalshi log loss by hours before kickoff: 72h 0.4670, 48h 0.4672, 24h 0.4655, 12h 0.4641, 6h 0.4642, 1h 0.4631, 0h 0.4630. The formula scores 0.4737 on the same markets.
+- Spread by hours before kickoff: 4.7¢, 3.7¢, 3.0¢, 1.9¢, 1.8¢, 1.5¢, 1.7¢.
+
+**Rule A** (NO on the middle rung, formula under by 3–10 points), by entry time:
+
+| Entry | All players: bets, ROI (± SE), CLV | No-news players: bets, ROI (± SE), CLV |
+|---|---|---|
+| 72h | 165, +15.8% (±4.7), +0.30¢ | 48, +8.3% (±8.6), +0.59¢ |
+| 48h | 359, +11.1% (±3.4), +0.24¢ | 103, +5.3% (±6.2), +0.30¢ |
+| 24h | 442, +7.5% (±3.3), +0.02¢ | 120, +2.2% (±6.5), +0.27¢ |
+| 12h | 535, +5.2% (±3.0) | 153, −0.0% (±5.6) |
+| 6h | 575, +3.7% (±2.9) | 159, +3.1% (±5.5) |
+| 1h | 626, +5.9% (±2.8) | 178, +3.0% (±5.5) |
+| Kickoff | 623, +5.2% (±2.8) | 181, +1.8% (±4.9) |
+
+The early-entry gains in the all-players column use injury knowledge the market lacked at the time (look-ahead). The no-news column is the fair test.
+
+**Injury cases at kickoff (2026, all rungs):**
+- Position group lost a regular (backup's line): priced 30.8%, hit 30.9%; buy NO −1.8% (4,478 markets, 312 player-games). Priced right.
+- Group got a regular back: priced 30.3%, hit 26.3%; buy NO +4.8% (±4.0). Kalshi log loss 0.4480 vs formula 0.4397: the formula beats Kalshi here.
+  - The returning player himself: 15 player-games; noise.
+  - A teammate is returning: priced 30.3%, hit 25.4%; NO +7.0% (±4.2); middle rung +9.8% (±4.3), 263 markets.
+- No team news: NO −5.2% (±2.4).
+- 2025 replication (middle rungs): a teammate returning was priced 44.6%, hit 39.6%; NO +3.1% (±7.5), 187 markets, 124 player-games. No team news: NO −3.2%.
+
+This became rule B in props_scan.py (skill positions only; the returning player must be confirmed active on the roster).

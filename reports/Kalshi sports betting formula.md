@@ -318,3 +318,47 @@ Separately, the team-win formula now treats a projected starter who is on IR or 
 - **Multiple testing:** about 40 rule-by-sport cells were tested, so one or two "significant" cells are expected by chance alone. That's why every lead had to pass a second season.
 - **Fees** are as of Oct 2026. Kalshi taker 0.07 (maker 0.0175 on game lines); Polymarket International sports 0.05; Polymarket US 0.0695.
 - **Not covered:** NBA and MLB player markets, in-game (live) trading beyond the late-game rule, and market making with real quoting infrastructure. That last one is where the documented profits on these venues actually go.
+
+
+---
+
+## 9. Applying Unabated's rules (26 Oct)
+
+**Sources.** Unabated's videos "You're Working Too Hard: Using AI in Betting", "Betting The NFL: Are You Placing The Right Wagers?", "Simplify NFL Betting" and "The 4 Commandments of Injury News". I worked from Unabated's written summaries because YouTube blocks transcript downloads from this server.
+
+### Their rules, and what each one became here
+
+1. **Track your closing line value (CLV): did the price move toward your bet?**
+   - **Built:** `research/paper_log.py` logs every scanned pick, grades it from Kalshi, and measures the move from our entry to kickoff.
+   - **First reading, 120 picks (Weeks 6–7):** 91–29 and +5.3%. But the price moved toward us by **−0.3¢ ± 0.2¢**, which is zero.
+   - **Verdict:** the market isn't confirming an edge yet.
+2. **Props are softest midweek; Sunday is the most efficient.**
+   - **Tested:** 25,000 Kalshi player markets, priced from 72 hours before kickoff.
+   - **Kalshi does sharpen toward kickoff:** log loss falls from 0.4670 to 0.4630, and the spread narrows from 4.7¢ to 1.5¢.
+   - **Our rule entered earlier looked better:** +16% at 72 hours vs +5% at kickoff.
+   - **But not on the fair test:** players with no team news (the formula otherwise knows inactives the market didn't) came in at only +2% to +8% ± 5–9%. CLV was +0.3¢ to +0.6¢, not significant.
+   - **Verdict:** no proven timing edge. Early lines also cost about 3¢ more in spread.
+3. **Injury news: redistribute usage, and watch for overreaction ("a bridge too far").**
+   - **Overreaction:** not on Kalshi. Backups' lines when a starter is out were priced exactly right (30.8% priced, 30.9% hit).
+   - **The opposite effect showed up:** when a regular **returns**, the teammates who filled in stay priced too high.
+
+     | Season | Priced | Hit | NO on the middle rung |
+     |---|---|---|---|
+     | 2026 | 29% | 21% | +9.8% ± 4.3% (263) |
+     | 2025 | 45% | 40% | +3.1% ± 7.5% (187) |
+
+     Pooled, about **+7% ± 4%**. This is now **rule B** in the scanner. It's promising, not proven.
+4. **Anticipate the news.**
+   - `props_scan.py --scenarios` lists the picks whose status flips if a Questionable regular sits, so you can act the moment inactives post.
+5. **Price props with medians, not means.** The formula already prices the whole distribution (P(over the line)), not the average.
+6. **Straight props, not same-game parlays.** This matches section 7; the parlay discussion stands.
+
+**Not covered:** the Matt Downs video ("The Bet That Wins 87% of the Time"), whose content was unavailable here.
+
+### Weekly routine now
+
+```bash
+python research/props_scan.py --scenarios --log    # Sat night / Sun morning; again ~90 min before kickoff
+python research/paper_log.py grade                 # after the games
+python research/paper_log.py summary               # record, profit, CLV by rule and week
+```
