@@ -232,3 +232,58 @@ The early-entry gains in the all-players column use injury knowledge the market 
 - 2025 replication (middle rungs): a teammate returning was priced 44.6%, hit 39.6%; NO +3.1% (±7.5), 187 markets, 124 player-games. No team news: NO −3.2%.
 
 This became rule B in props_scan.py (skill positions only; the returning player must be confirmed active on the roster).
+
+
+## K. Kalshi NFL total-points and spread ladders vs the sportsbook close (2026 Weeks 1–7; research/ladders_backtest.py)
+
+**Data:** 4,719 priced rungs in 106 games (2,705 spread rungs, 2,014 totals), last quote at kickoff, spread ≤ 10¢. Sportsbook-fair probability = the closing line plus the empirical 2012–2025 distribution of actual minus line.
+
+**Accuracy (log loss):**
+
+| Ladder | Kalshi | Sportsbook-implied |
+|---|---|---|
+| Spreads | 0.5138 | 0.5115 |
+| Totals | 0.5084 | 0.5078 |
+
+**Calibration:** close in most buckets. Spreads priced 65–80¢ (93 rungs): Kalshi said 71%, book said 67%, hit 56%. Small sample.
+
+**Sides priced 85–90¢:**
+
+| Ladder | Bets | Avg price | Won | ROI (± SE) |
+|---|---|---|---|---|
+| Spreads | 385 | 87.5¢ | 86.5% | −2.5% (±2.7%) |
+| Totals | 231 | 87.6¢ | 87.0% | −2.2% (±2.4%) |
+
+**Buying the side cheaper on Kalshi than the book's fair probability (taker + fee), clustered by game:**
+
+| Edge filter | Bets | ROI (± SE) | By ladder |
+|---|---|---|---|
+| > 0 | 2,004 | +3.8% (±8.7%) | totals −2.5%; spreads +6.8% |
+| > 2 points | 409 | +9.3% (±9.9%) | — |
+| > 4 points | 93 | +6.7% (±15.7%) | — |
+
+**By volume (rung median contracts):**
+
+| Band | Median contracts | Kalshi said | Hit | +EV bets | ROI (± SE) |
+|---|---|---|---|---|---|
+| Thin | 13k | 31.6% | 25.9% | 638 | −47.6% (±4.7%) |
+| Mid | 73k | — | — | 682 | +18.2% (±13.7%) |
+| Deep | 344k | — | — | 684 | +37.2% (±13.9%) |
+
+**By distance from the main line:**
+
+| Distance | ROI |
+|---|---|
+| Within 3 points | −0.8% |
+| 4–7 points | +13.7% (±7.8%) |
+| 8–14 points | +0.5% |
+| 15+ points | +1.6% |
+
+**Caveats:**
+- The book fair price for alternate rungs is modelled from the main line, not real alternate-line odds.
+- League-wide scoring moves rungs and games together within a week, so these standard errors are optimistic.
+
+**Matt Downs, "Kalshi NFL Strategy: The Bet That Wins 87% of the Time" (posted 2026-08-20).** Sources: channel RSS description and thumbnail.
+- The 87% bet is presented as one to avoid: a Kalshi Over total at 87¢, stamped "mispriced".
+- His method: devigged sharp-book consensus as the fair price; edge = fair − price − fee; target thin alternate lines and props.
+- He sells Upside's +EV Sniper. His performance figures are unaudited and inconsistent across his pages.

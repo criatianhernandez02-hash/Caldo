@@ -362,3 +362,36 @@ python research/props_scan.py --scenarios --log    # Sat night / Sun morning; ag
 python research/paper_log.py grade                 # after the games
 python research/paper_log.py summary               # record, profit, CLV by rule and week
 ```
+
+
+---
+
+## 10. The "87%" bet, Matt Downs's method, and Kalshi totals/spread ladders (27 Oct)
+
+**What the "87%" video says.** Recovered from the channel's public RSS description and thumbnail; the transcript was unavailable.
+- **The 87% bet is one he says to skip.** The video's first chapter is "The 87% Bet Nobody Should Take." The thumbnail shows a Kalshi Patriots–Seahawks "Over" total at 87¢, stamped "mispriced".
+- **His method:**
+  - Get a fair probability by removing the margin from several sharp sportsbooks' prices.
+  - Edge = fair probability − Kalshi price − fee. Bet only when it's positive.
+  - Hunt thin, low-volume alternate totals and spreads, where he says Kalshi drifts.
+- **Context:** he sells the tool that does this (Upside's "+EV Sniper"). His published results are unaudited, and two of his pages report different figures for the same month.
+
+**Our test: Kalshi NFL total-points and spread ladders, 2026 Weeks 1–7.** 4,719 priced rungs in 106 games, last quote at kickoff (`research/ladders_backtest.py`). The "sportsbook fair" probability for each rung comes from the sportsbook closing total or spread plus 2012–2025 history of how far results landed from the line.
+- **Calibration:** Kalshi's ladders are well calibrated. The sportsbook-implied probabilities are equally or slightly more accurate:
+
+  | Ladder | Kalshi log loss | Sportsbook-implied log loss |
+  |---|---|---|
+  | Spreads | 0.5138 | 0.5115 |
+  | Totals | 0.5084 | 0.5078 |
+
+- **The 87% zone:** sides priced 85–90¢ won about 87% of the time (spreads 86.5%, totals 87.0%). That works out to **−2.5% and −2.2% per bet after fees**: a high win rate, not a profit.
+- **Downs's rule:** buying whichever side Kalshi sold cheaper than the sportsbook's fair price returned +3.8% ± 8.7% over 2,004 bets. That's noise, because 106 games is a small sample.
+- **Thin vs. deep markets:** thin, low-volume rungs did not reward it. Picks there lost 48% (± 5%), while deep rungs showed +37% (± 14%). That's the opposite of the thin-market pitch.
+- **Limit of this test:** the fair price here is a model built from the main line, not the sportsbooks' real alternate-line odds. A faithful test needs those odds.
+
+**Getting real sportsbook odds.** The cheapest legitimate source is The Odds API: free plan of 500 credits a month, $30 a month for 20,000.
+- It carries NFL player props, including alternate lines, from FanDuel, DraftKings, BetOnline and others, plus the exchanges Novig and ProphetX.
+- It's unconfirmed whether it carries Pinnacle's player props.
+- A season of about 60 games at 4 price snapshots each costs about 960 credits.
+- FanDuel's and DraftKings' terms ban scraping, so an API is the right route.
+- With a key, the scanner can add a sportsbook check to every pick, and the ladder test can use real alternate-line prices.
