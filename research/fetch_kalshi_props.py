@@ -17,6 +17,11 @@ endpoints, which serve candles one market per request. To keep that affordable i
 half of the games (a reproducible hash sample) and, for each player in them, only the middle
 rung of his ladder (the strikes are set before the game, so this uses no outcome information).
 Files are named <SERIES>_hist_markets.json / <SERIES>_hist_candles.jsonl.
+
+    python research/fetch_kalshi_props.py --pre-hours 96 <out_dir> [SERIES ...]
+
+fetches the current-season candles from 96 hours (or any N) before kickoff, for timing and
+closing-line-value tests.
 """
 
 from __future__ import annotations
@@ -85,8 +90,9 @@ def match(event: str, ko: dict) -> tuple[str, int] | None:
     return None
 
 
-def main(out_dir: Path, series_list: list[str]) -> None:
+def main(out_dir: Path, series_list: list[str], pre_hours: int = PRE_H) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    per = max(1, min(100, 9500 // (pre_hours + POST_H + 14)))  # a day's kickoffs span up to ~14h; 10,000-candle cap
     ko = kickoffs()
     for series in series_list:
         ms = settled(series)
@@ -105,9 +111,9 @@ def main(out_dir: Path, series_list: list[str]) -> None:
         with cpath.open("a") as fh:
             for day, group in sorted(by_day.items()):
                 group.sort(key=lambda m: m["kickoff"])
-                for i in range(0, len(group), 100):
-                    chunk = group[i:i + 100]
-                    lo = min(m["kickoff"] for m in chunk) - PRE_H * 3600
+                for i in range(0, len(group), per):
+                    chunk = group[i:i + per]
+                    lo = min(m["kickoff"] for m in chunk) - pre_hours * 3600
                     hi = max(m["kickoff"] for m in chunk) + POST_H * 3600
                     r = get("/markets/candlesticks", {"market_tickers": ",".join(m["ticker"] for m in chunk),
                                                       "start_ts": lo, "end_ts": hi, "period_interval": 60})
@@ -160,7 +166,9 @@ def main_historical(out_dir: Path, series_list: list[str], season: int = 2025, w
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "--historical":
+    if sys.argv[1] == "--pre-hours":
+        main(Path(sys.argv[3]), sys.argv[4:] or DEFAULT_SERIES, pre_hours=int(sys.argv[2]))
+    elif sys.argv[1] == "--historical":
         main_historical(Path(sys.argv[2]), sys.argv[3:] or DEFAULT_SERIES)
     else:
         main(Path(sys.argv[1]), sys.argv[2:] or DEFAULT_SERIES)
