@@ -29,16 +29,18 @@ sys.path.insert(0, str(ROOT))
 from research.fetch_kalshi_games import get, slim  # noqa: E402
 
 LOG = Path(__file__).resolve().parent / "paper_trades.csv"
-COLS = ["logged_at", "week", "game_id", "kickoff", "ticker", "player", "stat", "line", "side", "entry_price",
+COLS = ["logged_at", "week", "game_id", "kickoff", "ticker", "player", "stat", "line", "rule", "side", "entry_price",
         "entry_cost", "contracts", "stake", "formula_p_side", "kalshi_mid_at_entry", "edge", "news", "group",
         "result", "won", "profit", "close_side_mid", "clv_cents", "close_ev"]
 
 
 def load() -> pd.DataFrame:
     log = pd.read_csv(LOG) if LOG.exists() else pd.DataFrame(columns=COLS)
-    for c in ("result", "won", "news", "group"):
+    if "rule" not in log:
+        log["rule"] = "A: formula under"
+    for c in ("result", "won", "news", "group", "rule"):
         log[c] = log[c].astype(object)
-    return log
+    return log[COLS]
 
 
 def add(scan_csv: str, stake: float = 20.0) -> None:
@@ -48,6 +50,7 @@ def add(scan_csv: str, stake: float = 20.0) -> None:
     rows = pd.DataFrame({
         "logged_at": logged, "week": p["game_id"].str[:7], "game_id": p["game_id"], "kickoff": p["kickoff"],
         "ticker": p["ticker"], "player": p["name"], "stat": p["stat"], "line": (p["strike"] + 0.5).astype(int),
+        "rule": p["rule"] if "rule" in p else "A: formula under",
         "side": "NO", "entry_price": p["no_ask"], "entry_cost": p["no_cost"],
         "contracts": np.floor(stake / p["no_cost"]).astype(int), "stake": stake,
         "formula_p_side": 1 - p["p_over"], "kalshi_mid_at_entry": 1 - (p["yes_bid"] + p["yes_ask"]) / 2,
@@ -132,6 +135,7 @@ def summary() -> None:
     pd.set_option("display.width", 200)
     rows = {"ALL": block(g)}
     rows.update({f"group: {k}": block(d) for k, d in g.groupby("group")})
+    rows.update({f"rule: {k}": block(d) for k, d in g.groupby("rule")})
     rows.update({f"week: {k}": block(d) for k, d in g.groupby("week")})
     print(pd.DataFrame(rows).T.round(3).to_string())
 

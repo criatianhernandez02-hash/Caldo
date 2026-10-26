@@ -259,18 +259,20 @@ def derive(s: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([s, pd.DataFrame(feats, index=s.index)], axis=1)
 
 
-def live_absences(s: pd.DataFrame, team: str, season: int, week: int, out_keys: set[str]) -> dict:
+def live_absences(s: pd.DataFrame, team: str, season: int, week: int, out_keys: set[str],
+                  active_keys: set[str] | None = None) -> dict:
     """Absence features for a game not played yet: regulars from the team's last games this season
     whose name is in out_keys (Out/Doubtful/not active) are vacated; players from earlier this
-    season who are not in out_keys are returning; backup_qb when the usual starting QB is out or
-    has not started the team's latest game."""
+    season who are confirmed active (active_keys) and not out are returning; backup_qb when the
+    usual starting QB is out or has not started the team's latest game."""
     t = s[(s["team"] == team) & (s["season"] == season) & (s["week"] < week)]
     games = t.drop_duplicates("game_id").sort_values("week")["game_id"].tolist()
     recent = t[t["game_id"].isin(games[-LOOKBACK:])].sort_values("week").drop_duplicates("player_id", keep="last")
     regulars = [((t, c), g, k in out_keys) for t, c, g, k in
                 zip(recent["post_tshare"].fillna(0), recent["post_cshare"].fillna(0), recent["pg"], recent["name_key"])]
     earlier = t[~t["player_id"].isin(recent["player_id"])].sort_values("week").drop_duplicates("player_id", keep="last")
-    earlier = earlier[~earlier["name_key"].isin(out_keys)]
+    # returning only if confirmed active on the roster (players who left the team or sit on IR are not)
+    earlier = earlier[~earlier["name_key"].isin(out_keys) & earlier["name_key"].isin(active_keys or set())]
     back = [((tt, c), g) for tt, c, g in zip(earlier["post_tshare"].fillna(0), earlier["post_cshare"].fillna(0), earlier["pg"])]
     qbs = s[(s["team"] == team) & (s["position"] == "QB") & (s["attempts"] > 0) & (s["season"] * 100 + s["week"] < season * 100 + week)]
     starts = qbs.loc[qbs.groupby("game_id")["attempts"].idxmax()].sort_values(["season", "week"]).tail(8)
@@ -281,11 +283,12 @@ def live_absences(s: pd.DataFrame, team: str, season: int, week: int, out_keys: 
     return {**share_gone(regulars, back), "backup_qb": backup}
 
 
-def pregame_absent(s: pd.DataFrame, want: pd.DataFrame, out: dict | None = None) -> pd.DataFrame:
+def pregame_absent(s: pd.DataFrame, want: pd.DataFrame, out: dict | None = None, active: dict | None = None) -> pd.DataFrame:
     """Features for (game_id, name_key) pairs with no box-score row - a player who was active but
     recorded nothing, a late scratch, or a game not played yet: his last post-game state carried
     forward one game. Only players still on one of the two teams are returned. For games not
-    played yet, `out` maps (week, team) to the name keys listed Out/Doubtful that week."""
+    played yet, `out` maps (week, team) to the name keys listed Out/Doubtful or not active that
+    week, and `active` to the name keys confirmed active on the roster."""
     acols = [c for c in s.columns if c.startswith(("vac_", "grp_", "gvac_", "gret_"))] + ["backup_qb"]
     absent_ctx = s.drop_duplicates(["game_id", "team"]).set_index(["game_id", "team"])[acols]
     live_cache: dict = {}
@@ -330,7 +333,8 @@ def pregame_absent(s: pd.DataFrame, want: pd.DataFrame, out: dict | None = None)
         else:
             ck = (gs, gw, last["team"])
             if ck not in live_cache:
-                live_cache[ck] = live_absences(s, last["team"], gs, gw, (out or {}).get((gw, last["team"]), set()))
+                live_cache[ck] = live_absences(s, last["team"], gs, gw, (out or {}).get((gw, last["team"]), set()),
+                                               (active or {}).get((gw, last["team"]), set()))
             row.update(live_cache[ck])
         key = (r.game_id, last["team"], last["pg"])
         if key in opp_ctx.index:

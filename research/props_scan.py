@@ -1,6 +1,6 @@
 """Paper-trading scanner for the one lead left: buy NO on a player's middle rung when the formula is lower.
 
-    python research/props_scan.py [--edge 0.03] [--stake 20]
+    python research/props_scan.py [--edge 0.03] [--stake 20] [--scenarios] [--log]
 
 Pulls the open Kalshi NFL player ladders (receiving yards, rushing yards, receptions) for games that
 have not kicked off, computes the Caldo player formula from each player's history
@@ -12,6 +12,13 @@ Backtest (props_backtest.py, edge 3 points, middle rungs, buying at the ask with
 blind NO on the same rungs lost 0.9%. That is about 1.9 standard errors after ~40 tests, and the
 edge does not grow at a 5-point threshold, so it is NOT proven: log the picks and check them
 before putting money on it.
+
+Rule B (added 26 Oct, after Unabated's injury-news rules): NO on a player's middle rung when a
+regular in his position group is back from missing games (and he is not the one returning).
+Kalshi prices injuries well but is slow to trim the fill-ins when the starter returns: those
+lines were ~5 points too high in both seasons tested (2026 all rungs: priced 30%, hit 25%;
+2025 middle rungs: priced 45%, hit 40%). NO on the middle rung: 2026 +9.8% (263 bets),
+2025 +3.1% (187), pooled about +7% +- 4% - promising, not proven; paper-trade it.
 
 Before scoring, the scan re-downloads this season's stats, weekly rosters and schedule, and
 tells the formula who is out (Out/Doubtful on nflverse's injury report, or not active on the
@@ -78,18 +85,26 @@ def refresh(season: int) -> None:
             print(f"(could not refresh {path.name}: {e}; using the cached copy)")
 
 
-def ruled_out(season: int, inj: pd.DataFrame) -> dict:
-    """(week, team) -> name keys not available: Out/Doubtful on the injury report, or anything but
-    ACT on the weekly roster (game-day inactives once posted, IR, cut, traded)."""
+def ruled_out(season: int, inj: pd.DataFrame) -> tuple[dict, dict]:
+    """(week, team) -> name keys that are out, and (week, team) -> name keys confirmed active.
+    Out: Out/Doubtful on the injury report, or anything but ACT on that week's roster (game-day
+    inactives once posted, IR, cut, traded). Active: ACT on the roster. Weeks the roster has not
+    reached yet use the latest roster posted (a returning player must be confirmed active)."""
     out: dict = {}
+    active: dict = {}
     for r in inj[inj["report_status"].isin(["Out", "Doubtful"])].itertuples():
         out.setdefault((int(r.week), r.team), set()).add(r.name_key)
     path = ROOT / "data_cache" / f"roster_weekly_{season}.csv"
     if path.exists():
         ros = pd.read_csv(path, usecols=["week", "team", "full_name", "status"], low_memory=False)
-        for r in ros[ros["status"] != "ACT"].itertuples():
-            out.setdefault((int(r.week), r.team), set()).add(norm_name(r.full_name))
-    return out
+        ros["name_key"] = ros["full_name"].map(norm_name)
+        last = int(ros["week"].max())
+        for week in range(1, 23):
+            w = ros[ros["week"] == min(week, last)]
+            for team, g in w.groupby("team"):
+                out.setdefault((week, team), set()).update(g.loc[g["status"] != "ACT", "name_key"])
+                active[(week, team)] = set(g.loc[g["status"] == "ACT", "name_key"])
+    return out, active
 
 
 def injuries(season: int) -> pd.DataFrame:
@@ -143,7 +158,7 @@ def f(x) -> float:
     return float(x) if x not in (None, "") else np.nan
 
 
-def scan(edge: float = 0.03, stake: float = 20.0) -> pd.DataFrame:
+def scan(edge: float = 0.03, stake: float = 20.0, scenarios: bool = False) -> pd.DataFrame:
     ko, now = kickoffs(), time.time()
     rows = []
     for series in DEFAULT_SERIES:
@@ -167,7 +182,29 @@ def scan(edge: float = 0.03, stake: float = 20.0) -> pd.DataFrame:
     refresh(season)
     s = build()
     models = fit_all(s)
-    feats = pregame_absent(s, df[["game_id", "name_key"]], out=ruled_out(season, injuries(season)))
+    inj = injuries(season)
+    out_keys, active_keys = ruled_out(season, inj)
+    d = score(s, models, df, out_keys, active_keys)
+    d["no_ask"] = d["no_ask"].fillna(1 - d["yes_bid"])
+    d["no_cost"] = d["no_ask"] + taker_fee(d["no_ask"])
+    d["edge"] = (1 - d["p_over"]) - d["no_cost"]
+    ok = (d["yes_bid"] > 0) & (d["yes_ask"] - d["yes_bid"] <= 0.10)
+    # rule B: a regular in his position group is back from missing games (and he is not the one returning)
+    d["teammate_back"] = (d["own_gret"] > 0.10) & (d["games_missed"] == 0) & d["position"].isin(["RB", "WR", "TE"])
+    d["rule"] = np.select([(d["edge"] >= edge) & d["teammate_back"], d["edge"] >= edge, d["teammate_back"]],
+                          ["A+B", "A: formula under", "B: teammate back"], "")
+    picks = d[ok & (d["rule"] != "")].sort_values("edge", ascending=False).copy()
+    picks["contracts"] = np.floor(stake / picks["no_cost"]).astype(int)
+    picks["news"] = news_flags(picks) if len(picks) else []
+    picks["kickoff_et"] = pd.to_datetime(picks["kickoff"], unit="s", utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %H:%M")
+    if scenarios:
+        picks.attrs["scenarios"] = sit_scenarios(s, models, df, d[ok], inj, out_keys, active_keys, edge)
+    return picks
+
+
+def score(s, models, df, out_keys, active_keys) -> pd.DataFrame:
+    """Formula P(over) for every market row in df, given who is out / active."""
+    feats = pregame_absent(s, df[["game_id", "name_key"]], out=out_keys, active=active_keys)
     out = []
     for stat, m in models.items():
         part = df[df["stat"] == stat].merge(feats.loc[m.usable(feats), ["game_id", "name_key", "position", "team", "games_missed"] + m.features],
@@ -176,23 +213,41 @@ def scan(edge: float = 0.03, stake: float = 20.0) -> pd.DataFrame:
             continue
         part["formula_mean"] = m.mean(part)
         part["p_over"] = m.p_over(part["formula_mean"].to_numpy(), part["strike"].to_numpy())
+        part["own_gret"] = part["l_gret_c" if stat == "rushing_yards" else "l_gret_t"]
         out.append(part.drop(columns=m.features))
-    d = pd.concat(out, ignore_index=True)
-    d["no_ask"] = d["no_ask"].fillna(1 - d["yes_bid"])
-    d["no_cost"] = d["no_ask"] + taker_fee(d["no_ask"])
-    d["edge"] = (1 - d["p_over"]) - d["no_cost"]
-    ok = (d["yes_bid"] > 0) & (d["yes_ask"] - d["yes_bid"] <= 0.10)
-    picks = d[ok & (d["edge"] >= edge)].sort_values("edge", ascending=False).copy()
-    picks["contracts"] = np.floor(stake / picks["no_cost"]).astype(int)
-    picks["news"] = news_flags(picks) if len(picks) else []
-    picks["kickoff_et"] = pd.to_datetime(picks["kickoff"], unit="s", utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %H:%M")
-    return picks
+    return pd.concat(out, ignore_index=True)
+
+
+def sit_scenarios(s, models, df, base, inj, out_keys, active_keys, edge) -> pd.DataFrame:
+    """Unabated's 'anticipate the news': for each Questionable regular (RB/WR/TE/QB) in these games,
+    re-score his game as if he sits and list the middle rungs whose rule-A status would change."""
+    rows = []
+    week_of = {g: int(g[5:7]) for g in df["game_id"].unique()}
+    for game, week in week_of.items():
+        teams = game.split("_")[2:]
+        q = inj[(inj["week"] == week) & inj["team"].isin(teams) & (inj["report_status"] == "Questionable")
+                & inj["position"].isin(["RB", "WR", "TE", "QB"])]
+        for r in q.itertuples():
+            sub = df[(df["game_id"] == game) & (df["name_key"] != r.name_key)]  # his teammates; his own lines are moot
+            out2 = {k: set(v) for k, v in out_keys.items()}
+            out2.setdefault((week, r.team), set()).add(r.name_key)
+            alt = score(s, models, sub, out2, active_keys)
+            if alt.empty:
+                continue
+            alt = alt.merge(base[["ticker", "edge", "no_cost"]], on="ticker")
+            alt["edge_if_sits"] = (1 - alt["p_over"]) - alt["no_cost"]
+            flip = alt[(alt["edge"] >= edge) != (alt["edge_if_sits"] >= edge)]
+            for f in flip.itertuples():
+                rows.append({"if_this_player_sits": f"{r.full_name} ({r.team} {r.position})", "game_id": game,
+                             "market": f"{f.name} {int(f.strike + 0.5)}+ {f.stat.replace('_', ' ')}",
+                             "edge_now": f.edge, "edge_if_sits": f.edge_if_sits})
+    return pd.DataFrame(rows)
 
 
 def main(argv: list[str]) -> None:
     edge = float(argv[argv.index("--edge") + 1]) if "--edge" in argv else 0.03
     stake = float(argv[argv.index("--stake") + 1]) if "--stake" in argv else 20.0
-    picks = scan(edge, stake)
+    picks = scan(edge, stake, scenarios="--scenarios" in argv)
     pd.set_option("display.width", 200)
     print("PAPER TRADE ONLY - unproven lead (see docstring). Injury flags use nflverse's report;\n"
           "inactives are announced 90 minutes before kickoff, so re-run close to game time.\n")
@@ -202,18 +257,25 @@ def main(argv: list[str]) -> None:
     show = picks.assign(market=picks["name"] + " " + (picks["strike"] + 0.5).astype(int).astype(str) + "+ "
                         + picks["stat"].str.replace("_", " "),
                         kalshi_yes=(picks["yes_bid"] + picks["yes_ask"]) / 2)
-    cols = ["kickoff_et", "game_id", "market", "kalshi_yes", "p_over", "formula_mean", "no_ask", "edge", "contracts"]
+    cols = ["kickoff_et", "game_id", "market", "rule", "kalshi_yes", "p_over", "formula_mean", "no_ask", "edge", "contracts"]
     clean = show[show["news"] == ""]
     print(f"== No injury news ({len(clean)}): the cleanest paper trades ==")
     print(clean[cols].round(3).to_string(index=False) if len(clean) else "(none)")
     flagged = show[show["news"] != ""]
     print(f"\n== Flagged ({len(flagged)}): role or QB change - the formula now adjusts for who is out, "
           "but these are its least-tested cases; log separately ==")
-    print(flagged[cols[:3] + ["edge", "news"]].round(3).to_string(index=False) if len(flagged) else "(none)")
+    print(flagged[cols[:4] + ["edge", "news"]].round(3).to_string(index=False) if len(flagged) else "(none)")
+    sc = picks.attrs.get("scenarios")
+    if sc is not None:
+        print("\n== If a Questionable player sits (re-run when inactives post, 90 min before kickoff) ==")
+        print(sc.round(3).to_string(index=False) if len(sc) else "(no pick would change)")
     OUT.mkdir(exist_ok=True)
     path = OUT / f"props_scan_{dt.date.today().isoformat()}.csv"
     picks.to_csv(path, index=False)
     print(f"\n{len(picks)} candidates; buy NO at or below the listed ask. Saved to {path}")
+    if "--log" in argv:
+        from research.paper_log import add
+        add(str(path), stake)
 
 
 if __name__ == "__main__":
